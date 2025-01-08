@@ -1,0 +1,122 @@
+# GitHub Downloader (gh-download)
+
+`gh-download` is a Python command-line tool that allows you to download files from GitHub repositories, including private ones, by leveraging your existing `gh` (GitHub CLI) authentication.
+
+## Features
+
+- Download files from public and private GitHub repositories.
+- Utilizes your authenticated `gh` CLI session to access private repositories.
+- Automatically prompts for `gh auth login` if you are not authenticated.
+- Provides clear, user-friendly output and error messages using the Rich library.
+- Simple command-line interface.
+
+## Prerequisites
+
+- **Python**: Version 3.13 or higher.
+- **GitHub CLI (`gh`)**: Must be installed and in your system's PATH. You can install it from [https://cli.github.com/](https://cli.github.com/).
+
+## Installation
+
+Install `gh-download` using pip:
+
+```bash
+pip install gh-download
+```
+
+Or for development:
+
+1.  **Clone the repository:**
+
+    ```bash
+    git clone <repository_url>
+    cd gh-download
+    ```
+
+2.  **Install in development mode:**
+    ```bash
+    python -m venv .venv
+    source .venv/bin/activate  # On Windows use `.venv\Scripts\activate`
+    uv pip install -e .  # Or pip install -e .
+    ```
+
+## Usage
+
+After installation, you can use the `gh-download` command:
+
+```bash
+gh-download REPO_OWNER REPO_NAME FILE_PATH [OPTIONS]
+```
+
+### Examples
+
+```bash
+# Download a file from a public repository
+gh-download octocat Spoon-Knife README.md
+
+# Download from a specific branch
+gh-download octocat Spoon-Knife README.md --branch main
+
+# Save to a specific location
+gh-download octocat Spoon-Knife README.md --output ./my_readme.md
+
+# Download from a different branch
+gh-download microsoft vscode package.json --branch release/1.85
+```
+
+### Arguments
+
+- `REPO_OWNER`: The owner of the repository (e.g., 'octocat')
+- `REPO_NAME`: The name of the repository (e.g., 'Spoon-Knife')
+- `FILE_PATH`: The path to the file within the repository (e.g., 'README.md')
+
+### Options
+
+- `--branch, -b`: The branch, tag, or commit SHA to download from (default: main)
+- `--output, -o`: Local path to save the downloaded file (defaults to the original filename in the current directory)
+- `--help`: Show help message
+
+### How it Works
+
+1.  **Checks for `gh` CLI**: Verifies that the `gh` command-line tool is installed and accessible.
+2.  **Checks Authentication**: Runs `gh auth status` to see if you are logged into GitHub.
+3.  **Prompts for Login**: If not authenticated, it will ask if you want to run `gh auth login`. If you agree, it initiates the standard `gh` web-based authentication flow.
+4.  **Retrieves Token**: Once authenticated, it uses `gh auth token` to get an OAuth token.
+5.  **Downloads File**: Uses the GitHub API with the retrieved token to download the specified file.
+6.  **Saves File**: Saves the downloaded content to the specified local output path.
+
+## Development
+
+### Running Tests
+
+The project uses `pytest` for testing. To run tests:
+
+1.  Ensure you have `pytest` and `pytest-mock` (if not already installed as a dev dependency):
+    ```bash
+    pip install pytest pytest-mock
+    ```
+2.  Run pytest from the project root directory:
+    ```bash
+    pytest
+    ```
+
+### Pre-commit Hooks
+
+This project uses pre-commit hooks (ruff for linting and formatting, mypy for type checking) to maintain code quality. To set them up:
+
+1.  Install pre-commit:
+    ```bash
+    pip install pre-commit
+    ```
+2.  Install the hooks:
+    ```bash
+    pre-commit install
+    ```
+    Now, the hooks will run automatically before each commit.
+
+## Contributing
+
+Contributions are welcome! If you find a bug or have a feature request, please open an issue. If you'd like to contribute code, please fork the repository and submit a pull request.
+
+## License
+
+This project is licensed under the MIT License - see the `LICENSE` file for details (assuming one would be added).

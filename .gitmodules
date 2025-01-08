@@ -1,0 +1,3 @@
+[submodule "cli-submodule"]
+	path = cli-submodule
+	url = ./cli-submodule
