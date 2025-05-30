@@ -673,7 +673,7 @@ def download(
     repo_name: str,
     file_path: str,  # This can be a file or a folder path
     branch: str,
-    output_path: Path,  # Base output path provided by user or default
+    output_path: str | Path,  # Base output path provided by user or default
     *,
     quiet: bool = False,  # Suppress verbose output when True
     headers: dict[str, str] | None = None,  # Pre-authenticated headers
@@ -687,6 +687,9 @@ def download(
                 style="blue",
             ),
         )
+
+    if isinstance(output_path, str):
+        output_path = Path(output_path)
 
     # Clean the input file_path from leading/trailing slashes for API calls
     normalized_path = _strip_slashes(file_path)
