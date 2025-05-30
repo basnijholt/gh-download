@@ -643,14 +643,14 @@ def _download_directory(
             all_success = False
             continue
 
-        # Recursively call download_file for each item
+        # Recursively call download for each item
         console.print(
             Rule(
                 f"Processing [blue]{item_type}[/blue]: [cyan]{item_name}[/cyan]",
                 style="dim",
             ),
         )
-        success = download_file(
+        success = download(
             repo_owner=repo_owner,
             repo_name=repo_name,
             file_path=item_path_in_repo,  # Use the full path from the API response
@@ -667,7 +667,7 @@ def _download_directory(
     return all_success
 
 
-def download_file(
+def download(
     repo_owner: str,
     repo_name: str,
     file_path: str,  # This can be a file or a folder path

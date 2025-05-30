@@ -21,7 +21,7 @@ from gh_download import (
     _perform_gh_login_and_verify,
     _retrieve_gh_auth_token,
     _setup_download_headers,
-    download_file,
+    download,
     get_github_token_from_gh_cli,
     run_gh_auth_login,
 )
@@ -416,7 +416,7 @@ def test_download_file_no_token(
     mock_get_token_from_cli.return_value = None
     output_file = tmp_path / "file.txt"
     output_file.parent.mkdir(parents=True, exist_ok=True)
-    assert not download_file(
+    assert not download(
         "owner",
         "repo",
         "file.txt",
@@ -451,7 +451,7 @@ def test_download_file_success(
 
     output_file = tmp_path / "downloaded.txt"
     output_file.parent.mkdir(parents=True, exist_ok=True)
-    assert download_file("owner", "repo", "file.txt", "main", output_file)
+    assert download("owner", "repo", "file.txt", "main", output_file)
 
     # Should be called twice - once for metadata, once for download
     assert mock_requests_get.call_count == 2
@@ -480,7 +480,7 @@ def test_download_file_http_error(
     mock_requests_get.return_value = mock_response
     output_file = tmp_path / "downloaded.txt"
     output_file.parent.mkdir(parents=True, exist_ok=True)
-    assert not download_file(
+    assert not download(
         "owner",
         "repo",
         "file.txt",
@@ -530,7 +530,7 @@ runner = CliRunner()
 
 @pytest.fixture
 def mock_download_core_logic() -> Generator[mock.MagicMock]:
-    with mock.patch("gh_download.cli.download_file") as mock_download:
+    with mock.patch("gh_download.cli.download") as mock_download:
         yield mock_download
 
 
@@ -663,7 +663,7 @@ def test_download_file_directory_success(
     ]
 
     # Call the function
-    result = download_file(
+    result = download(
         repo_owner="owner",
         repo_name="repo",
         file_path="folder",

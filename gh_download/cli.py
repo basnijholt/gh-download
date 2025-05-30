@@ -8,7 +8,7 @@ import typer
 from rich.panel import Panel
 from rich.text import Text
 
-from gh_download import console, download_file
+from gh_download import console, download
 
 app = typer.Typer(
     add_completion=False,
@@ -79,7 +79,7 @@ def get(
         )
         raise typer.Exit(code=1) from e
 
-    success = download_file(
+    success = download(
         repo_owner=repo_owner,
         repo_name=repo_name,
         file_path=file_path,
