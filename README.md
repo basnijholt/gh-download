@@ -1,3 +1,9 @@
+# GitHub Downloader (gh-download)
+
+`gh-download` is a Python command-line tool that allows you to download files from GitHub repositories, including private ones, by leveraging your existing `gh` (GitHub CLI) authentication.
+
+<details><summary><b><u>[ToC]</u></b> 📚</summary>
+
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 
@@ -18,9 +24,8 @@
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
-# GitHub Downloader (gh-download)
+</details>
 
-`gh-download` is a Python command-line tool that allows you to download files from GitHub repositories, including private ones, by leveraging your existing `gh` (GitHub CLI) authentication.
 
 ## Features
 
