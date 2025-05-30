@@ -849,3 +849,130 @@ def test_run_gh_auth_login_fails_status_check(mock_subprocess_run: mock.MagicMoc
 def test_run_gh_auth_login_gh_not_found(mock_subprocess_run: mock.MagicMock):
     mock_subprocess_run.side_effect = FileNotFoundError
     assert run_gh_auth_login() is False
+
+
+def test_download_directory_no_double_nesting(
+    mock_get_token_from_cli: mock.MagicMock,
+    mock_requests_get: mock.MagicMock,
+    tmp_path: Path,
+):
+    """Test that downloading a directory doesn't create double nesting when output path matches folder name."""
+    mock_get_token_from_cli.return_value = "MOCK_TOKEN"
+
+    # Mock the metadata API call that returns directory contents for "tests/map"
+    metadata_response = mock.Mock()
+    metadata_response.raise_for_status = mock.Mock()
+    metadata_response.json.return_value = [
+        {
+            "type": "file",
+            "name": "test_file.py",
+            "path": "tests/map/test_file.py",
+            "download_url": "https://raw.githubusercontent.com/owner/repo/main/tests/map/test_file.py",
+        },
+    ]
+
+    # Mock the file metadata response
+    file_metadata_response = mock.Mock()
+    file_metadata_response.raise_for_status = mock.Mock()
+    file_metadata_response.json.return_value = {
+        "type": "file",
+        "name": "test_file.py",
+        "download_url": "https://raw.githubusercontent.com/owner/repo/main/tests/map/test_file.py",
+    }
+
+    # Mock the file download calls
+    file_response = mock.Mock()
+    file_response.raise_for_status = mock.Mock()
+    file_response.iter_content.return_value = [b"test content"]
+
+    # Set up the mock to return different responses for different calls
+    mock_requests_get.side_effect = [
+        metadata_response,  # First call: get folder metadata
+        file_metadata_response,  # Second call: get test_file.py metadata
+        file_response,  # Third call: download test_file.py
+    ]
+
+    # Simulate CLI behavior: output_path is already named "map" (from Path("tests/map").name)
+    output_path = tmp_path / "map"
+
+    # Call the function
+    result = download(
+        repo_owner="owner",
+        repo_name="repo",
+        file_path="tests/map",
+        branch="main",
+        output_path=output_path,
+    )
+
+    assert result is True
+
+    # Verify that files are directly in "map" directory, NOT in "map/map"
+    expected_file = tmp_path / "map" / "test_file.py"
+    assert expected_file.exists()
+    assert expected_file.read_bytes() == b"test content"
+
+    # Verify there's no double nesting
+    double_nested_path = tmp_path / "map" / "map"
+    assert not double_nested_path.exists()
+
+
+def test_download_directory_correct_nesting_in_existing_dir(
+    mock_get_token_from_cli: mock.MagicMock,
+    mock_requests_get: mock.MagicMock,
+    tmp_path: Path,
+):
+    """Test that downloading a directory correctly nests inside an existing directory."""
+    mock_get_token_from_cli.return_value = "MOCK_TOKEN"
+
+    # Mock the metadata API call that returns directory contents for "tests/map"
+    metadata_response = mock.Mock()
+    metadata_response.raise_for_status = mock.Mock()
+    metadata_response.json.return_value = [
+        {
+            "type": "file",
+            "name": "test_file.py",
+            "path": "tests/map/test_file.py",
+            "download_url": "https://raw.githubusercontent.com/owner/repo/main/tests/map/test_file.py",
+        },
+    ]
+
+    # Mock the file metadata response
+    file_metadata_response = mock.Mock()
+    file_metadata_response.raise_for_status = mock.Mock()
+    file_metadata_response.json.return_value = {
+        "type": "file",
+        "name": "test_file.py",
+        "download_url": "https://raw.githubusercontent.com/owner/repo/main/tests/map/test_file.py",
+    }
+
+    # Mock the file download calls
+    file_response = mock.Mock()
+    file_response.raise_for_status = mock.Mock()
+    file_response.iter_content.return_value = [b"test content"]
+
+    # Set up the mock to return different responses for different calls
+    mock_requests_get.side_effect = [
+        metadata_response,  # First call: get folder metadata
+        file_metadata_response,  # Second call: get test_file.py metadata
+        file_response,  # Third call: download test_file.py
+    ]
+
+    # Create an existing directory and download into it
+    downloads_dir = tmp_path / "downloads"
+    downloads_dir.mkdir()
+
+    # Call the function - should create "downloads/map/" not "downloads/"
+    result = download(
+        repo_owner="owner",
+        repo_name="repo",
+        file_path="tests/map",
+        branch="main",
+        output_path=downloads_dir,
+    )
+
+    assert result is True
+
+    # Verify that folder is nested inside the existing directory
+    expected_file = downloads_dir / "map" / "test_file.py"
+    assert expected_file.exists()
+    assert expected_file.read_bytes() == b"test content"

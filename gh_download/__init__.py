@@ -520,15 +520,22 @@ def _download_directory(
     """Download a directory and all its contents recursively."""
     # Create the base directory for the folder's contents
     target_dir_base = output_path
+
+    # Check if we should create a subdirectory or use output_path directly
+    folder_name = Path(normalized_path).name
+
     if (
-        normalized_path
-        and not output_path.suffix
-        and (output_path.is_dir() or not output_path.exists())
-    ):  # Not downloading repo root
-        # If output_path itself is a directory, create the folder inside it.
-        # If output_path was given as /path/to/new_folder_name, use new_folder_name.
-        target_dir_base = output_path / Path(normalized_path).name
-        # else: output_path is likely a specific name for the downloaded folder itself.
+        normalized_path  # Not downloading repo root
+        and not output_path.suffix  # output_path is not a file
+        and (
+            output_path.is_dir() or not output_path.exists()
+        )  # output_path is/will be a directory
+        and output_path.name
+        != folder_name  # Avoid double nesting when CLI already set the right name
+    ):
+        # Output path is an existing directory or doesn't match the folder name,
+        # so create the folder inside it
+        target_dir_base = output_path / folder_name
 
     try:
         console.print(
