@@ -1,0 +1,131 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ghdl"
+description = "."
+dynamic = ["version"]
+authors = [{ name = "Bas Nijholt", email = "bas@nijho.lt" }]
+dependencies = []
+requires-python = ">=3.13"
+
+[project.readme]
+file = "README.md"
+content-type = "text/markdown"
+
+[project.urls]
+Homepage = "https://github.com/basnijholt/ghdl"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.20.0",
+    "pytest-cov>=4.0.0",
+    "requests>=2.25.1",
+]
+dev = [
+    "ghdl[test]",
+    "pre-commit>=3.0.0",
+    "bump-my-version>=0.10.0",
+]
+
+# Duplicate of test+dev optional-dependencies groups
+[dependency-groups]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.20.0",
+    "pytest-cov>=4.0.0",
+    "requests>=2.25.1",
+    "pre-commit>=3.0.0",
+    "bump-my-version>=0.10.0",
+]
+
+[project.scripts]
+ghdl = "ghdl:main"
+
+[tool.setuptools.packages.find]
+include = ["ghdl.*", "ghdl"]
+
+[tool.setuptools.dynamic]
+version = { attr = "ghdl._version.__version__" }
+
+[tool.setuptools.package-data]
+"ghdl" = ["py.typed"]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+addopts = [
+    "--cov=ghdl",
+    "--cov-report=term",
+    "--cov-report=html",
+    "--cov-report=xml",
+    "--no-cov-on-fail",
+    "-v",
+]
+
+[tool.coverage.run]
+omit = []
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
+
+[tool.black]
+line-length = 88
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "T20",     # flake8-print
+    "ANN101",  # Missing type annotation for {name} in method
+    "S101",    # Use of assert detected
+    "S603",    # S603 `subprocess` call: check for execution of untrusted input
+    "PD901",   # df is a bad variable name. Be kinder to your future self.
+    "ANN401",  # Dynamically typed expressions (typing.Any) are disallowed in {name}
+    "D402",    # First line should not be the function's signature
+    "PLW0603", # Using the global statement to update `X` is discouraged
+    "D401",    # First line of docstring should be in imperative mood
+    "SLF001",  # Private member accessed
+    "PLR0913", # Too many arguments in function definition
+    "TD002",   # Missing author in TODO
+    "ANN002",  # Missing type annotation for `*args`
+    "ANN003",  # Missing type annotation for `**kwargs`
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["SLF001", "D103", "E501", "PLR2004", "S101", "ANN201"]
+"tests/test_examples.py" = ["E501"]
+".github/*" = ["INP001"]
+"example/*" = ["INP001", "D100"]
+"docs/*" = ["INP001", "E501"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 18
+
+[tool.mypy]
+python_version = "3.13"
+
+# Use bump-my-version, e.g., call `bump-my-version bump minor`
+[tool.bumpversion]
+current_version = "0.1.0"
+commit = true
+commit_args = "--no-verify"
+tag = true
+tag_name = "v{new_version}"
+
+[[tool.bumpversion.files]]
+filename = "ghdl/_version.py"
+replace = '__version__ = "{new_version}"'
+search = '__version__ = "{current_version}"'
