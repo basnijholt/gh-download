@@ -8,11 +8,7 @@ import typer
 from rich.panel import Panel
 from rich.text import Text
 
-from gh_download import (
-    __version__,  # noqa: F401
-    console,
-    download_file,
-)
+from gh_download import console, download_file
 
 app = typer.Typer(
     add_completion=False,
@@ -34,7 +30,7 @@ def get(
     ),
     file_path: str = typer.Argument(
         ...,
-        help="The path to the file within the repository (e.g., 'README.md').",
+        help="The path to the file or folder within the repository (e.g., 'README.md' or 'src/my_folder').",
     ),
     branch: str = typer.Option(
         "main",
@@ -46,22 +42,29 @@ def get(
         None,
         "--output",
         "-o",
-        help="Local path to save the downloaded file. Defaults to the original filename in the current directory.",
+        help=(
+            "Local path to save the downloaded file or folder. "
+            "If downloading a file, this can be a new filename or a directory. "
+            "If downloading a folder, this is the directory where the folder will be placed. "
+            "Defaults to the original filename/foldername in the current directory."
+        ),
         show_default=False,
     ),
 ) -> None:
-    """Downloads a file from a GitHub repository.
+    """Downloads a file or folder from a GitHub repository.
 
-    Example:
+    Examples:
         gh-download get octocat Spoon-Knife README.md -o my_readme.md
+        gh-download get octocat Spoon-Knife src/app -o downloaded_app_code
 
     """
+    # Determine the base output path
     if output_path_str:
         output_path = Path(output_path_str).resolve()
     else:
-        output_path = (
-            Path.cwd() / (Path(file_path).name or "downloaded_file_gh_download")
-        ).resolve()
+        # Default: current working directory with the filename appended
+        filename = Path(file_path).name or "downloaded_file_gh_download"
+        output_path = (Path.cwd() / filename).resolve()
 
     # Ensure parent directory exists
     try:
@@ -85,12 +88,22 @@ def get(
     )
 
     if success:
+        # Determine the final save location for display purposes
+        final_destination_name = Path(file_path).name or "downloaded_content"
+        final_save_location = output_path
+        if output_path.is_dir() or (
+            not output_path.exists() and not output_path.suffix
+        ):
+            final_save_location = output_path / final_destination_name
+
         console.print(
             Panel(
                 Text.assemble(
-                    ("🎉 File downloaded successfully!\n", "bold green"),
-                    ("Saved to: ", "green"),
-                    (str(output_path), "bold white"),
+                    ("🎉 Path downloaded successfully!\n", "bold green"),
+                    ("Content from '", "green"),
+                    (file_path, "cyan"),
+                    ("' saved to or within: ", "green"),
+                    (str(final_save_location), "bold white"),
                 ),
                 title="[bold green]Download Complete[/bold green]",
                 border_style="green",
@@ -100,7 +113,7 @@ def get(
         raise typer.Exit(code=0)
     console.print(
         Panel(
-            "❌ Download process failed. Please check the messages above.",
+            "❌ Download process failed. Please check messages above for details.",
             title="[bold red]Download Failed[/bold red]",
             border_style="red",
             expand=False,

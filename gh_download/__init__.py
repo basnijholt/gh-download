@@ -6,7 +6,7 @@ import json
 import shutil
 import subprocess
 from importlib.metadata import version
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import requests
 from rich.console import Console
@@ -15,11 +15,12 @@ from rich.prompt import Confirm  # For a nice yes/no prompt
 from rich.rule import Rule
 from rich.text import Text
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
 __version__ = version("gh_download")
 console = Console()
+
+
+def _strip_slashes(path_str: str) -> str:
+    return path_str.strip("/")
 
 
 def _check_gh_executable_and_notify() -> str | None:
@@ -322,65 +323,49 @@ def get_github_token_from_gh_cli() -> str | None:
         return None
 
 
-def _build_api_url_and_headers(
-    repo_owner: str,
-    repo_name: str,
-    file_path: str,
-    branch: str,
-) -> tuple[str, dict[str, str], str] | None:
-    """Builds the API URL and headers for GitHub API request."""
-    console.print(
-        "🔐 Attempting to ensure GitHub authentication and get token...",
-        style="cyan",
-    )
-    token = get_github_token_from_gh_cli()
-    if not token:
-        console.print(
-            "❌ Could not obtain GitHub token. Download aborted.",
-            style="bold red",
-        )
-        return None
-
-    api_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{file_path}?ref={branch}"
-    headers = {
-        "Authorization": f"token {token}",
-        "Accept": "application/vnd.github.v3.raw",
-    }
-    download_target = (
-        f"[bold magenta]{repo_owner}/{repo_name}[/bold magenta]/"
-        f"[cyan]{file_path}[/cyan] (branch: [yellow]{branch}[/yellow])"
-    )
-    return api_url, headers, download_target
-
-
 def _perform_download_and_save(
-    api_url: str,
-    headers: dict[str, str],
-    output_path: Path,  # Changed to Path
-    download_target: str,
+    download_url: str,  # Direct download URL for the file
+    headers: dict[str, str],  # Auth headers
+    output_path: Path,
+    display_name: str,  # For logging
 ) -> bool:
-    """Performs the file download and saves it to output_path."""
-    console.print(f"⏳ Attempting to download {download_target}...")
+    """Performs the file download from download_url and saves it to output_path."""
+    console.print(
+        f"⏳ Downloading [cyan]{display_name}[/cyan] to [green]{output_path}[/green]...",
+    )
     try:
+        # Ensure parent directory exists
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
         with requests.Session() as session:
-            response = session.get(api_url, headers=headers, timeout=30)
+            # Use stream=True for potentially large files
+            response = session.get(
+                download_url,
+                headers=headers,
+                timeout=60,
+                stream=True,
+            )
             response.raise_for_status()
 
-        with output_path.open("wb") as f:
-            f.write(response.content)
-        return True
+            with output_path.open("wb") as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            console.print(
+                f"✅ Saved [cyan]{display_name}[/cyan] to [green]{output_path}[/green]",
+            )
+            return True
     except requests.exceptions.RequestException as e:
-        _handle_download_errors(e, download_target, output_path)
+        _handle_download_errors(e, display_name, output_path)
         return False
-    except OSError as e:
-        _handle_download_errors(e, download_target, output_path)
+    except OSError as e:  # For file I/O errors
+        _handle_download_errors(e, display_name, output_path)
         return False
 
 
 def _handle_download_errors(
     e: Exception,
-    download_target: str,
-    output_path: Path,  # Changed to Path
+    download_target_display_name: str,  # For logging
+    output_path: Path,
 ) -> None:
     """Handles various errors that can occur during download."""
     if isinstance(e, requests.exceptions.HTTPError):
@@ -389,7 +374,8 @@ def _handle_download_errors(
         status_unauthorized = 401
         status_forbidden = 403
         error_text = Text.assemble(
-            (f"Status Code: {e.response.status_code}\n", "bold red"),
+            (f"Failed to download {download_target_display_name}.\n", "bold red"),
+            (f"Status Code: {e.response.status_code}\n", "red"),
         )
         try:
             error_details = e.response.json()
@@ -410,7 +396,7 @@ def _handle_download_errors(
 
         if e.response.status_code == status_not_found:
             error_text.append(
-                "File not found. Please check repository owner, name, path, and branch.",
+                "Path not found. Please check repository owner, name, path, and branch.",
                 style="yellow",
             )
         elif e.response.status_code in (status_unauthorized, status_forbidden):
@@ -435,14 +421,14 @@ def _handle_download_errors(
     elif isinstance(e, requests.exceptions.Timeout):
         console.print(
             Panel(
-                f"🚨 Request timed out while trying to download {download_target}.",
+                f"🚨 Request timed out for {download_target_display_name}.",
                 title="[bold red]Timeout Error[/bold red]",
                 border_style="red",
             ),
         )
     elif isinstance(e, requests.exceptions.ConnectionError):
         msg = (
-            f"🔗 Connection error while trying to download {download_target}. "
+            f"🔗 Connection error for {download_target_display_name}. "
             "Check your network."
         )
         console.print(
@@ -455,18 +441,18 @@ def _handle_download_errors(
     elif isinstance(
         e,
         requests.exceptions.RequestException,
-    ):  # General request exception
+    ):
         console.print(
             Panel(
-                f"❌ An unexpected request error occurred: {e}",
+                f"❌ An unexpected request error occurred for {download_target_display_name}: {e}",
                 title="[bold red]Request Error[/bold red]",
                 border_style="red",
             ),
         )
-    elif isinstance(e, OSError):  # File I/O error
+    elif isinstance(e, OSError):
         console.print(
             Panel(
-                f"💾 Error writing file to '{output_path}': {e}",
+                f"💾 Error writing file to '{output_path}' for {download_target_display_name}: {e}",
                 title="[bold red]File I/O Error[/bold red]",
                 border_style="red",
             ),
@@ -474,48 +460,183 @@ def _handle_download_errors(
     else:
         console.print(
             Panel(
-                f"🤷 An unexpected error occurred during download: {e}",
-                title="[bold red]Unexpected Download Error[/bold red]",
+                f"🤷 An unexpected error occurred with {download_target_display_name}: {e}",
+                title="[bold red]Unexpected Error[/bold red]",
                 border_style="red",
             ),
         )
 
 
-def download_file(
+def download_file(  # noqa: PLR0911, PLR0912, PLR0915
     repo_owner: str,
     repo_name: str,
-    file_path: str,
+    file_path: str,  # This can be a file or a folder path
     branch: str,
-    output_path: Path,
+    output_path: Path,  # Base output path provided by user or default
 ) -> bool:
-    """Core logic for downloading a file, assuming output_path is resolved."""
+    """Core logic for downloading a file or folder."""
     console.print(
         Rule(
-            f"[bold blue]GitHub File Downloader: {repo_owner}/{repo_name}[/bold blue]",
+            f"[bold blue]GitHub Downloader: {repo_owner}/{repo_name}[/bold blue]",
             style="blue",
         ),
     )
-    console.print(f"Attempting to download: [cyan]{file_path}[/cyan]")
+    # Clean the input file_path from leading/trailing slashes for API calls
+    clean_file_path = _strip_slashes(file_path)
+    display_repo_path = f"[cyan]{clean_file_path}[/cyan]"
+    if not clean_file_path:  # Handle case where root of repo is requested
+        display_repo_path = "[cyan](repository root)[/cyan]"
+
+    console.print(f"Attempting to download: {display_repo_path}")
     console.print(f"Branch/Ref: [yellow]{branch}[/yellow]")
-    console.print(f"Saving to: [green]{output_path}[/green]")
+    console.print(f"Base output: [green]{output_path}[/green]")
     console.print("-" * 30)
 
-    url_headers_target = _build_api_url_and_headers(
-        repo_owner,
-        repo_name,
-        file_path,
-        branch,
-    )
-    if not url_headers_target:
+    # Get auth token for API requests
+    token = get_github_token_from_gh_cli()
+    if not token:
+        console.print(
+            "❌ Could not obtain GitHub token. Download aborted.",
+            style="bold red",
+        )
         return False
-    api_url, headers, download_target = url_headers_target
 
-    return _perform_download_and_save(
-        api_url,
-        headers,
-        output_path,
-        download_target,
+    # Headers for all API requests
+    common_headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+    # API URL to get metadata for the given path (file or directory)
+    metadata_api_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{clean_file_path}?ref={branch}"
+
+    try:
+        console.print(f"🔎 Fetching metadata for {display_repo_path}...")
+        with requests.Session() as session:
+            response = session.get(metadata_api_url, headers=common_headers, timeout=30)
+            response.raise_for_status()
+            content_info = response.json()
+
+    except requests.exceptions.RequestException as e:
+        _handle_download_errors(e, f"metadata for {display_repo_path}", output_path)
+        return False
+
+    # Process based on whether it's a file or directory
+    # content_info can be a dict (for a file) or a list of dicts (for a directory)
+    if isinstance(content_info, dict) and content_info.get("type") == "file":
+        # It's a single file
+        file_name = content_info.get("name", Path(clean_file_path).name)
+        download_url = content_info.get("download_url")
+
+        if not download_url:
+            console.print(
+                f"❌ Could not get download_url for file: {file_name}",
+                style="red",
+            )
+            return False
+
+        # Determine the final output path for the file
+        # If output_path ends with the file_name or is not a directory, use it directly.
+        # Otherwise, it's a directory, so append file_name.
+        final_file_output_path = output_path
+        if output_path.is_dir() or (
+            not output_path.exists()
+            and output_path.name != file_name
+            and not output_path.suffix
+        ):
+            # If output_path is an existing dir, or a non-existent path that looks like a dir
+            final_file_output_path = output_path / file_name
+
+        # Ensure parent directory for the file exists
+        try:
+            final_file_output_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            console.print(
+                f"❌ Error creating directory for {final_file_output_path.parent}: {e}",
+                style="red",
+            )
+            return False
+
+        raw_download_headers = {
+            "Authorization": f"token {token}",
+            "Accept": "application/octet-stream",
+        }
+        return _perform_download_and_save(
+            download_url,
+            raw_download_headers,
+            final_file_output_path,
+            file_name,
+        )
+
+    if isinstance(content_info, list):  # It's a directory
+        # Create the base directory for the folder's contents
+        target_dir_base = output_path
+        if (
+            clean_file_path
+            and not output_path.suffix
+            and (output_path.is_dir() or not output_path.exists())
+        ):  # Not downloading repo root
+            # If output_path itself is a directory, create the folder inside it.
+            # If output_path was given as /path/to/new_folder_name, use new_folder_name.
+            target_dir_base = output_path / Path(clean_file_path).name
+            # else: output_path is likely a specific name for the downloaded folder itself.
+
+        try:
+            console.print(
+                f"📁 Creating local directory: [green]{target_dir_base}[/green]",
+            )
+            target_dir_base.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            console.print(
+                f"❌ Error creating base directory '{target_dir_base}': {e}",
+                style="red",
+            )
+            return False
+
+        all_success = True
+        console.print(
+            f"📦 Found {len(content_info)} items in directory {display_repo_path}.",
+        )
+        for item in content_info:
+            item_name = item.get("name")
+            item_type = item.get("type")
+            item_path_in_repo = item.get("path")  # Full path in repo
+
+            if not item_name or not item_type or not item_path_in_repo:
+                console.print(
+                    f"⚠️ Skipping item with missing info: {item}",
+                    style="yellow",
+                )
+                all_success = False
+                continue
+
+            # Recursively call download_file for each item
+            console.print(
+                Rule(
+                    f"Processing [blue]{item_type}[/blue]: [cyan]{item_name}[/cyan]",
+                    style="dim",
+                ),
+            )
+            success = download_file(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                file_path=item_path_in_repo,  # Use the full path from the API response
+                branch=branch,
+                output_path=target_dir_base,  # Children are downloaded *into* this directory
+            )
+            if not success:
+                all_success = False
+                console.print(
+                    f"❌ Failed to download {item_type} [yellow]{item_name}[/yellow] from {display_repo_path}",
+                    style="red",
+                )
+        return all_success
+
+    console.print(
+        f"❌ Unexpected content type received from API for {display_repo_path}.",
+        style="red",
     )
+    console.print(f"Response: {content_info}", style="dim")
+    return False
 
 
 def main() -> None:  # pragma: no cover

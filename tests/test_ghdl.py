@@ -11,7 +11,6 @@ import requests
 from typer.testing import CliRunner
 
 from gh_download import (
-    _build_api_url_and_headers,
     _check_gh_auth_status,
     _check_gh_cli_availability,
     _check_gh_executable_and_notify,
@@ -302,11 +301,6 @@ def test_get_github_token_from_gh_cli_unexpected_exception(
     assert get_github_token_from_gh_cli() is None
 
 
-def test_build_api_url_and_headers_no_token(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("gh_download.get_github_token_from_gh_cli", lambda: None)
-    assert _build_api_url_and_headers("owner", "repo", "path", "main") is None
-
-
 def test_perform_download_and_save_os_error(
     mock_requests_get: mock.MagicMock,
     tmp_path: Path,
@@ -436,22 +430,38 @@ def test_download_file_success(
     tmp_path: Path,
 ):
     mock_get_token_from_cli.return_value = "MOCK_TOKEN"
-    mock_response = mock.Mock()
-    mock_response.raise_for_status = mock.Mock()
-    mock_response.content = b"file content"
-    mock_requests_get.return_value = mock_response
+
+    # First call to get metadata
+    metadata_response = mock.Mock()
+    metadata_response.raise_for_status = mock.Mock()
+    metadata_response.json.return_value = {
+        "type": "file",
+        "name": "file.txt",
+        "download_url": "https://raw.githubusercontent.com/owner/repo/main/file.txt",
+    }
+
+    # Second call to download the actual file
+    download_response = mock.Mock()
+    download_response.raise_for_status = mock.Mock()
+    download_response.iter_content.return_value = [b"file content"]
+
+    mock_requests_get.side_effect = [metadata_response, download_response]
+
     output_file = tmp_path / "downloaded.txt"
     output_file.parent.mkdir(parents=True, exist_ok=True)
     assert download_file("owner", "repo", "file.txt", "main", output_file)
-    mock_get_token_from_cli.assert_called_once()
-    mock_requests_get.assert_called_once_with(
-        "https://api.github.com/repos/owner/repo/contents/file.txt?ref=main",
-        headers={
-            "Authorization": "token MOCK_TOKEN",
-            "Accept": "application/vnd.github.v3.raw",
-        },
-        timeout=30,
-    )
+
+    # Should be called twice - once for metadata, once for download
+    assert mock_requests_get.call_count == 2
+
+    # First call gets metadata
+    metadata_call = mock_requests_get.call_args_list[0]
+    assert metadata_call[1]["headers"]["Accept"] == "application/vnd.github.v3+json"
+
+    # Second call downloads the file
+    download_call = mock_requests_get.call_args_list[1]
+    assert download_call[1]["headers"]["Accept"] == "application/octet-stream"
+
     assert output_file.read_bytes() == b"file content"
 
 
@@ -607,3 +617,70 @@ def test_cli_download_default_output_filename_from_path(
         branch="main",
         output_path=tmp_path / "some_file.zip",
     )
+
+
+def test_download_file_directory_success(
+    mock_get_token_from_cli: mock.MagicMock,
+    mock_requests_get: mock.MagicMock,
+    tmp_path: Path,
+):
+    """Test that downloading a directory works correctly."""
+    mock_get_token_from_cli.return_value = "MOCK_TOKEN"
+
+    # First call to get metadata - returns a list (directory)
+    metadata_response = mock.Mock()
+    metadata_response.raise_for_status = mock.Mock()
+    metadata_response.json.return_value = [
+        {
+            "type": "file",
+            "name": "file1.txt",
+            "path": "src/file1.txt",
+            "download_url": "https://raw.githubusercontent.com/owner/repo/main/src/file1.txt",
+        },
+        {
+            "type": "file",
+            "name": "file2.txt",
+            "path": "src/file2.txt",
+            "download_url": "https://raw.githubusercontent.com/owner/repo/main/src/file2.txt",
+        },
+    ]
+
+    # Mock responses for the individual file downloads (recursive calls)
+    file1_metadata = mock.Mock()
+    file1_metadata.raise_for_status = mock.Mock()
+    file1_metadata.json.return_value = {
+        "type": "file",
+        "name": "file1.txt",
+        "download_url": "https://raw.githubusercontent.com/owner/repo/main/src/file1.txt",
+    }
+
+    file1_download = mock.Mock()
+    file1_download.raise_for_status = mock.Mock()
+    file1_download.iter_content.return_value = [b"file1 content"]
+
+    file2_metadata = mock.Mock()
+    file2_metadata.raise_for_status = mock.Mock()
+    file2_metadata.json.return_value = {
+        "type": "file",
+        "name": "file2.txt",
+        "download_url": "https://raw.githubusercontent.com/owner/repo/main/src/file2.txt",
+    }
+
+    file2_download = mock.Mock()
+    file2_download.raise_for_status = mock.Mock()
+    file2_download.iter_content.return_value = [b"file2 content"]
+
+    # Sequence: directory metadata, file1 metadata, file1 download, file2 metadata, file2 download
+    mock_requests_get.side_effect = [
+        metadata_response,
+        file1_metadata,
+        file1_download,
+        file2_metadata,
+        file2_download,
+    ]
+
+    output_dir = tmp_path / "downloaded_src"
+    assert download_file("owner", "repo", "src", "main", output_dir)
+
+    # Should be called 5 times total
+    assert mock_requests_get.call_count == 5
