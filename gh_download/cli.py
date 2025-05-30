@@ -55,8 +55,8 @@ def get(
     """Downloads a file or folder from a GitHub repository.
 
     Examples:
-        gh-download get octocat Spoon-Knife README.md -o my_readme.md
-        gh-download get octocat Spoon-Knife src/app -o downloaded_app_code
+        gh-download octocat Spoon-Knife README.md -o my_readme.md
+        gh-download octocat Spoon-Knife src/app -o downloaded_app_code
 
     """
     # Determine the base output path

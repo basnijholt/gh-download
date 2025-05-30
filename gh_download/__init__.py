@@ -11,6 +11,7 @@ from pathlib import Path
 import requests
 from rich.console import Console
 from rich.panel import Panel
+from rich.progress import Progress
 from rich.prompt import Confirm
 from rich.rule import Rule
 from rich.text import Text
@@ -300,11 +301,15 @@ def _download_and_save_file(
     headers: dict[str, str],
     output_path: Path,
     display_name: str,
+    *,
+    quiet: bool = False,
 ) -> bool:
     """Download a file from download_url and save it to output_path."""
-    console.print(
-        f"⏳ Downloading [cyan]{display_name}[/cyan] to [green]{output_path}[/green]...",
-    )
+    if not quiet:
+        console.print(
+            f"⏳ Downloading [cyan]{display_name}[/cyan] to [green]{output_path}[/green]...",
+        )
+
     try:
         # Ensure parent directory exists
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -322,9 +327,11 @@ def _download_and_save_file(
             with output_path.open("wb") as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
-            console.print(
-                f"✅ Saved [cyan]{display_name}[/cyan] to [green]{output_path}[/green]",
-            )
+
+            if not quiet:
+                console.print(
+                    f"✅ Saved [cyan]{display_name}[/cyan] to [green]{output_path}[/green]",
+                )
             return True
     except requests.exceptions.RequestException as e:
         _handle_download_errors(e, display_name, output_path)
@@ -442,12 +449,15 @@ def _fetch_content_metadata(
     branch: str,
     headers: dict[str, str],
     display_name: str,
+    *,
+    quiet: bool = False,
 ) -> dict | list | None:
     """Fetch metadata for the given path from GitHub API."""
     metadata_api_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{normalized_path}?ref={branch}"
 
     try:
-        console.print(f"🔎 Fetching metadata for {display_name}...")
+        if not quiet:
+            console.print(f"🔎 Fetching metadata for {display_name}...")
         with requests.Session() as session:
             response = session.get(metadata_api_url, headers=headers, timeout=30)
             response.raise_for_status()
@@ -462,6 +472,8 @@ def _download_single_file(
     normalized_path: str,
     output_path: Path,
     headers: dict[str, str],
+    *,
+    quiet: bool = False,
 ) -> bool:
     """Download a single file based on content metadata."""
     file_name = content_info.get("name", Path(normalized_path).name)
@@ -505,6 +517,7 @@ def _download_single_file(
         raw_download_headers,
         final_file_output_path,
         file_name,
+        quiet=quiet,
     )
 
 
@@ -516,6 +529,9 @@ def _download_directory(
     branch: str,
     output_path: Path,
     display_name: str,
+    *,
+    headers: dict[str, str] | None = None,
+    show_progress: bool = True,
 ) -> bool:
     """Download a directory and all its contents recursively."""
     # Create the base directory for the folder's contents
@@ -549,44 +565,105 @@ def _download_directory(
         )
         return False
 
+    # Get headers once for the whole directory download if not provided
+    if headers is None:
+        headers = _setup_download_headers()
+        if not headers:
+            return False
+
     all_success = True
+    total_items = len(content_info)
+
     console.print(
-        f"📦 Found {len(content_info)} items in directory {display_name}.",
+        f"📦 Found {total_items} items in directory {display_name}.",
     )
 
-    for item in content_info:
-        item_name = item.get("name")
-        item_type = item.get("type")
-        item_path_in_repo = item.get("path")  # Full path in repo
-
-        if not item_name or not item_type or not item_path_in_repo:
-            console.print(
-                f"⚠️ Skipping item with missing info: {item}",
-                style="yellow",
+    if show_progress:
+        # Use Rich Progress for visual feedback (only at top level)
+        with Progress(console=console) as progress:
+            task = progress.add_task(
+                "[cyan]Downloading directory items...",
+                total=total_items,
             )
-            all_success = False
-            continue
 
-        # Recursively call download for each item
-        console.print(
-            Rule(
-                f"Processing [blue]{item_type}[/blue]: [cyan]{item_name}[/cyan]",
-                style="dim",
-            ),
-        )
-        success = download(
-            repo_owner=repo_owner,
-            repo_name=repo_name,
-            file_path=item_path_in_repo,  # Use the full path from the API response
-            branch=branch,
-            output_path=target_dir_base,  # Children are downloaded *into* this directory
-        )
-        if not success:
-            all_success = False
+            for item in content_info:
+                item_name = item.get("name")
+                item_type = item.get("type")
+                item_path_in_repo = item.get("path")  # Full path in repo
+
+                if not item_name or not item_type or not item_path_in_repo:
+                    console.print(
+                        f"⚠️ Skipping item with missing info: {item}",
+                        style="yellow",
+                    )
+                    all_success = False
+                    progress.advance(task)
+                    continue
+
+                # Update progress with current item
+                progress.update(
+                    task,
+                    description=f"[cyan]Downloading[/cyan] [blue]{item_type}[/blue]: [yellow]{item_name}[/yellow]",
+                )
+
+                # Recursively call download for each item with quiet mode and shared headers
+                success = download(
+                    repo_owner=repo_owner,
+                    repo_name=repo_name,
+                    file_path=item_path_in_repo,  # Use the full path from the API response
+                    branch=branch,
+                    output_path=target_dir_base,  # Children are downloaded *into* this directory
+                    quiet=True,  # Suppress verbose output for cleaner progress display
+                    headers=headers,  # Pass shared headers to avoid re-authentication
+                    show_progress=False,  # Disable progress for nested directories
+                )
+
+                if not success:
+                    all_success = False
+                    console.print(
+                        f"❌ Failed to download {item_type} [yellow]{item_name}[/yellow] from {display_name}",
+                        style="red",
+                    )
+
+                # Advance progress
+                progress.advance(task)
+    else:
+        # No progress bar for nested directory downloads
+        for item in content_info:
+            item_name = item.get("name")
+            item_type = item.get("type")
+            item_path_in_repo = item.get("path")  # Full path in repo
+
+            if not item_name or not item_type or not item_path_in_repo:
+                console.print(
+                    f"⚠️ Skipping item with missing info: {item}",
+                    style="yellow",
+                )
+                all_success = False
+                continue
+
             console.print(
-                f"❌ Failed to download {item_type} [yellow]{item_name}[/yellow] from {display_name}",
-                style="red",
+                f"📄 Processing [blue]{item_type}[/blue]: [yellow]{item_name}[/yellow]",
             )
+
+            # Recursively call download for each item with quiet mode and shared headers
+            success = download(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                file_path=item_path_in_repo,  # Use the full path from the API response
+                branch=branch,
+                output_path=target_dir_base,  # Children are downloaded *into* this directory
+                quiet=True,  # Suppress verbose output for cleaner progress display
+                headers=headers,  # Pass shared headers to avoid re-authentication
+                show_progress=False,  # Disable progress for nested directories
+            )
+
+            if not success:
+                all_success = False
+                console.print(
+                    f"❌ Failed to download {item_type} [yellow]{item_name}[/yellow] from {display_name}",
+                    style="red",
+                )
 
     return all_success
 
@@ -597,29 +674,44 @@ def download(
     file_path: str,  # This can be a file or a folder path
     branch: str,
     output_path: Path,  # Base output path provided by user or default
+    *,
+    quiet: bool = False,  # Suppress verbose output when True
+    headers: dict[str, str] | None = None,  # Pre-authenticated headers
+    show_progress: bool = True,  # Show progress bar for directory downloads
 ) -> bool:
     """Core logic for downloading a file or folder."""
-    console.print(
-        Rule(
-            f"[bold blue]GitHub Downloader: {repo_owner}/{repo_name}[/bold blue]",
-            style="blue",
-        ),
-    )
+    if not quiet:
+        console.print(
+            Rule(
+                f"[bold blue]GitHub Downloader: {repo_owner}/{repo_name}[/bold blue]",
+                style="blue",
+            ),
+        )
+
     # Clean the input file_path from leading/trailing slashes for API calls
     normalized_path = _strip_slashes(file_path)
     display_name = f"[cyan]{normalized_path}[/cyan]"
     if not normalized_path:  # Handle case where root of repo is requested
         display_name = "[cyan](repository root)[/cyan]"
 
-    console.print(f"Attempting to download: {display_name}")
-    console.print(f"Branch/Ref: [yellow]{branch}[/yellow]")
-    console.print(f"Base output: [green]{output_path}[/green]")
-    console.print("-" * 30)
+    if not quiet:
+        console.print(f"Attempting to download: {display_name}")
+        console.print(f"Branch/Ref: [yellow]{branch}[/yellow]")
+        console.print(f"Base output: [green]{output_path}[/green]")
+        console.print("-" * 30)
 
-    # Set up authentication headers
-    common_headers = _setup_download_headers()
-    if not common_headers:
-        return False
+    # Set up authentication headers (only if not provided)
+    if headers is None:
+        headers = _setup_download_headers()
+        if not headers:
+            return False
+    else:
+        # Use provided headers (for directory downloads)
+        common_headers = headers
+
+    # Assign to common_headers for consistent naming
+    if headers is not None:
+        common_headers = headers
 
     # Fetch metadata to determine if it's a file or directory
     content_info = _fetch_content_metadata(
@@ -629,6 +721,7 @@ def download(
         branch,
         common_headers,
         display_name,
+        quiet=quiet,
     )
     if content_info is None:
         return False
@@ -641,6 +734,7 @@ def download(
             normalized_path,
             output_path,
             common_headers,
+            quiet=quiet,
         )
 
     if isinstance(content_info, list):  # It's a directory
@@ -652,6 +746,8 @@ def download(
             branch,
             output_path,
             display_name,
+            headers=common_headers,  # Pass headers to avoid re-authentication
+            show_progress=show_progress,  # Pass progress setting
         )
 
     console.print(

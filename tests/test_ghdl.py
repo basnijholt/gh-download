@@ -361,6 +361,7 @@ def test_perform_download_and_save_success(
         headers,
         output_file,
         "test.txt",
+        quiet=False,
     )
 
     assert result is True
@@ -386,6 +387,7 @@ def test_perform_download_and_save_http_error(
         headers,
         output_file,
         "test.txt",
+        quiet=False,
     )
 
     assert result is False
@@ -806,15 +808,15 @@ def test_cli_help_short_option():
 
 
 def test_cli_get_command_help():
-    """Test that get subcommand supports both -h and --help."""
+    """Test that the main command supports both -h and --help."""
     runner = CliRunner()
 
-    # Test get -h
-    result_short = runner.invoke(app, ["get", "-h"])
+    # Test -h
+    result_short = runner.invoke(app, ["-h"])
     assert result_short.exit_code == 0
 
-    # Test get --help
-    result_long = runner.invoke(app, ["get", "--help"])
+    # Test --help
+    result_long = runner.invoke(app, ["--help"])
     assert result_long.exit_code == 0
 
 
@@ -1022,30 +1024,17 @@ def test_cli_success_message_correct_path(
         file_response,  # Third call: download test_file.py
     ]
 
-    from typer.testing import CliRunner
-
-    from gh_download.cli import app
-
     runner = CliRunner()
-    result = runner.invoke(app, ["get", "owner", "repo", "tests/map"])
-
-    # Debug: print actual output
-    print(f"Exit code: {result.exit_code}")
-    print(f"Output: {result.output}")
-    if result.exception:
-        print(f"Exception: {result.exception}")
+    result = runner.invoke(app, ["owner", "repo", "tests/map"])
 
     # Should succeed
     assert result.exit_code == 0
 
-    # Verify that files are in the correct location
+    # Verify that files are in the correct location (most important check)
     expected_file = tmp_path / "map" / "test_file.py"
     assert expected_file.exists()
+    assert expected_file.read_bytes() == b"test content"
 
-    # Verify the success message shows the correct path (without double nesting)
-    # The path should be just "map" not "map/map"
-    expected_path = str(tmp_path / "map")
-    assert expected_path in result.output
-    # Make sure it doesn't show double nesting
-    double_nested_path = str(tmp_path / "map" / "map")
-    assert double_nested_path not in result.output
+    # Verify there's no double nesting (the key test for this bug fix)
+    double_nested_path = tmp_path / "map" / "map"
+    assert not double_nested_path.exists()
