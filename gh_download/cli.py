@@ -92,8 +92,15 @@ def get(
         # Determine the final save location for display purposes
         final_destination_name = Path(file_path).name or "downloaded_content"
         final_save_location = output_path
-        if output_path.is_dir() or (
-            not output_path.exists() and not output_path.suffix
+
+        # Only add subdirectory to display path if:
+        # 1. output_path is an existing directory, AND
+        # 2. output_path name doesn't match the folder being downloaded
+        # This matches the logic in _download_directory
+        if (
+            output_path.is_dir()
+            and output_path.name != final_destination_name
+            and not output_path_str  # Only for default CLI behavior, not explicit -o paths
         ):
             final_save_location = output_path / final_destination_name
 

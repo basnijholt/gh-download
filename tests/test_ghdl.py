@@ -976,3 +976,76 @@ def test_download_directory_correct_nesting_in_existing_dir(
     expected_file = downloads_dir / "map" / "test_file.py"
     assert expected_file.exists()
     assert expected_file.read_bytes() == b"test content"
+
+
+def test_cli_success_message_correct_path(
+    mock_get_token_from_cli: mock.MagicMock,
+    mock_requests_get: mock.MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test that CLI success message shows correct path without double nesting."""
+    # Change to tmp_path for this test
+    monkeypatch.chdir(tmp_path)
+    mock_get_token_from_cli.return_value = "MOCK_TOKEN"
+
+    # Mock the metadata API call that returns directory contents for "tests/map"
+    metadata_response = mock.Mock()
+    metadata_response.raise_for_status = mock.Mock()
+    metadata_response.json.return_value = [
+        {
+            "type": "file",
+            "name": "test_file.py",
+            "path": "tests/map/test_file.py",
+            "download_url": "https://raw.githubusercontent.com/owner/repo/main/tests/map/test_file.py",
+        },
+    ]
+
+    # Mock the file metadata response
+    file_metadata_response = mock.Mock()
+    file_metadata_response.raise_for_status = mock.Mock()
+    file_metadata_response.json.return_value = {
+        "type": "file",
+        "name": "test_file.py",
+        "download_url": "https://raw.githubusercontent.com/owner/repo/main/tests/map/test_file.py",
+    }
+
+    # Mock the file download calls
+    file_response = mock.Mock()
+    file_response.raise_for_status = mock.Mock()
+    file_response.iter_content.return_value = [b"test content"]
+
+    # Set up the mock to return different responses for different calls
+    mock_requests_get.side_effect = [
+        metadata_response,  # First call: get folder metadata
+        file_metadata_response,  # Second call: get test_file.py metadata
+        file_response,  # Third call: download test_file.py
+    ]
+
+    from typer.testing import CliRunner
+
+    from gh_download.cli import app
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["get", "owner", "repo", "tests/map"])
+
+    # Debug: print actual output
+    print(f"Exit code: {result.exit_code}")
+    print(f"Output: {result.output}")
+    if result.exception:
+        print(f"Exception: {result.exception}")
+
+    # Should succeed
+    assert result.exit_code == 0
+
+    # Verify that files are in the correct location
+    expected_file = tmp_path / "map" / "test_file.py"
+    assert expected_file.exists()
+
+    # Verify the success message shows the correct path (without double nesting)
+    # The path should be just "map" not "map/map"
+    expected_path = str(tmp_path / "map")
+    assert expected_path in result.output
+    # Make sure it doesn't show double nesting
+    double_nested_path = str(tmp_path / "map" / "map")
+    assert double_nested_path not in result.output
