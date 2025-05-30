@@ -1,3 +1,23 @@
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+
+- [GitHub Downloader (gh-download)](#github-downloader-gh-download)
+  - [Features](#features)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+  - [Usage](#usage)
+    - [Examples](#examples)
+    - [Arguments](#arguments)
+    - [Options](#options)
+    - [How it Works](#how-it-works)
+  - [Development](#development)
+    - [Running Tests](#running-tests)
+    - [Pre-commit Hooks](#pre-commit-hooks)
+  - [Contributing](#contributing)
+  - [License](#license)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
 # GitHub Downloader (gh-download)
 
 `gh-download` is a Python command-line tool that allows you to download files from GitHub repositories, including private ones, by leveraging your existing `gh` (GitHub CLI) authentication.
