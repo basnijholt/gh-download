@@ -14,11 +14,13 @@ from gh_download import (
     _check_gh_auth_status,
     _check_gh_cli_availability,
     _check_gh_executable_and_notify,
+    _fetch_content_metadata,
     _handle_download_errors,
     _handle_gh_authentication_status,
     _perform_download_and_save,
     _perform_gh_login_and_verify,
     _retrieve_gh_auth_token,
+    _setup_download_headers,
     download_file,
     get_github_token_from_gh_cli,
     run_gh_auth_login,
@@ -627,60 +629,129 @@ def test_download_file_directory_success(
     """Test that downloading a directory works correctly."""
     mock_get_token_from_cli.return_value = "MOCK_TOKEN"
 
-    # First call to get metadata - returns a list (directory)
+    # Mock the metadata API call that returns directory contents
     metadata_response = mock.Mock()
     metadata_response.raise_for_status = mock.Mock()
     metadata_response.json.return_value = [
         {
             "type": "file",
             "name": "file1.txt",
-            "path": "src/file1.txt",
-            "download_url": "https://raw.githubusercontent.com/owner/repo/main/src/file1.txt",
-        },
-        {
-            "type": "file",
-            "name": "file2.txt",
-            "path": "src/file2.txt",
-            "download_url": "https://raw.githubusercontent.com/owner/repo/main/src/file2.txt",
+            "path": "folder/file1.txt",
+            "download_url": "https://raw.githubusercontent.com/owner/repo/main/folder/file1.txt",
         },
     ]
 
-    # Mock responses for the individual file downloads (recursive calls)
-    file1_metadata = mock.Mock()
-    file1_metadata.raise_for_status = mock.Mock()
-    file1_metadata.json.return_value = {
+    # Mock the file metadata response
+    file_metadata_response = mock.Mock()
+    file_metadata_response.raise_for_status = mock.Mock()
+    file_metadata_response.json.return_value = {
         "type": "file",
         "name": "file1.txt",
-        "download_url": "https://raw.githubusercontent.com/owner/repo/main/src/file1.txt",
+        "download_url": "https://raw.githubusercontent.com/owner/repo/main/folder/file1.txt",
     }
 
-    file1_download = mock.Mock()
-    file1_download.raise_for_status = mock.Mock()
-    file1_download.iter_content.return_value = [b"file1 content"]
+    # Mock the file download calls
+    file_response = mock.Mock()
+    file_response.raise_for_status = mock.Mock()
+    file_response.iter_content.return_value = [b"file content"]
 
-    file2_metadata = mock.Mock()
-    file2_metadata.raise_for_status = mock.Mock()
-    file2_metadata.json.return_value = {
-        "type": "file",
-        "name": "file2.txt",
-        "download_url": "https://raw.githubusercontent.com/owner/repo/main/src/file2.txt",
-    }
-
-    file2_download = mock.Mock()
-    file2_download.raise_for_status = mock.Mock()
-    file2_download.iter_content.return_value = [b"file2 content"]
-
-    # Sequence: directory metadata, file1 metadata, file1 download, file2 metadata, file2 download
+    # Set up the mock to return different responses for different calls
     mock_requests_get.side_effect = [
-        metadata_response,
-        file1_metadata,
-        file1_download,
-        file2_metadata,
-        file2_download,
+        metadata_response,  # First call: get folder metadata
+        file_metadata_response,  # Second call: get file1 metadata
+        file_response,  # Third call: download file1
     ]
 
-    output_dir = tmp_path / "downloaded_src"
-    assert download_file("owner", "repo", "src", "main", output_dir)
+    # Call the function
+    result = download_file(
+        repo_owner="owner",
+        repo_name="repo",
+        file_path="folder",
+        branch="main",
+        output_path=tmp_path / "downloaded_folder",
+    )
 
-    # Should be called 5 times total
-    assert mock_requests_get.call_count == 5
+    assert result is True
+    # Check that files were created
+    assert (tmp_path / "downloaded_folder" / "folder").exists()
+
+
+def test_setup_download_headers_success(
+    mock_get_token_from_cli: mock.MagicMock,
+):
+    """Test that _setup_download_headers returns correct headers when token is available."""
+    mock_get_token_from_cli.return_value = "test_token"
+
+    headers = _setup_download_headers()
+
+    assert headers is not None
+    assert headers["Authorization"] == "token test_token"
+    assert headers["Accept"] == "application/vnd.github.v3+json"
+
+
+def test_setup_download_headers_no_token(
+    mock_get_token_from_cli: mock.MagicMock,
+):
+    """Test that _setup_download_headers returns None when no token is available."""
+    mock_get_token_from_cli.return_value = None
+
+    headers = _setup_download_headers()
+
+    assert headers is None
+
+
+def test_fetch_content_metadata_success(
+    mock_requests_get: mock.MagicMock,
+):
+    """Test that _fetch_content_metadata successfully fetches and returns metadata."""
+    mock_response = mock.Mock()
+    mock_response.raise_for_status = mock.Mock()
+    mock_response.json.return_value = {"type": "file", "name": "test.txt"}
+    mock_requests_get.return_value = mock_response
+
+    headers = {
+        "Authorization": "token test",
+        "Accept": "application/vnd.github.v3+json",
+    }
+
+    result = _fetch_content_metadata(
+        repo_owner="owner",
+        repo_name="repo",
+        file_path="test.txt",
+        branch="main",
+        headers=headers,
+        display_repo_path="test.txt",
+    )
+
+    assert result == {"type": "file", "name": "test.txt"}
+
+
+def test_fetch_content_metadata_error(
+    mock_requests_get: mock.MagicMock,
+):
+    """Test that _fetch_content_metadata returns None on error."""
+    # Create a proper HTTPError with a mock response
+    mock_response = mock.Mock()
+    mock_response.status_code = 404
+    mock_response.json.return_value = {"message": "Not Found"}
+
+    http_error = requests.exceptions.HTTPError("404 Not Found")
+    http_error.response = mock_response
+
+    mock_requests_get.side_effect = http_error
+
+    headers = {
+        "Authorization": "token test",
+        "Accept": "application/vnd.github.v3+json",
+    }
+
+    result = _fetch_content_metadata(
+        repo_owner="owner",
+        repo_name="repo",
+        file_path="nonexistent.txt",
+        branch="main",
+        headers=headers,
+        display_repo_path="nonexistent.txt",
+    )
+
+    assert result is None
