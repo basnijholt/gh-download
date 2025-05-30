@@ -12,7 +12,7 @@ dependencies = [
     "rich>=14.0.0",
     "typer>=0.12.3",
 ]
-requires-python = ">=3.13"
+requires-python = ">=3.11"
 
 [project.readme]
 file = "README.md"
@@ -86,7 +86,7 @@ line-length = 88
 
 [tool.ruff]
 line-length = 88
-target-version = "py313"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["ALL"]
@@ -120,7 +120,7 @@ ignore = [
 max-complexity = 18
 
 [tool.mypy]
-python_version = "3.13"
+python_version = "3.11"
 
 [tool.versioningit]
 

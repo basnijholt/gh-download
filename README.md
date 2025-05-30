@@ -12,7 +12,7 @@
 
 ## Prerequisites
 
-- **Python**: Version 3.13 or higher.
+- **Python**: Version 3.11 or higher.
 - **GitHub CLI (`gh`)**: Must be installed and in your system's PATH. You can install it from [https://cli.github.com/](https://cli.github.com/).
 
 ## Installation
