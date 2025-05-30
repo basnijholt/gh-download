@@ -11,7 +11,7 @@ from pathlib import Path
 import requests
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Confirm  # For a nice yes/no prompt
+from rich.prompt import Confirm
 from rich.rule import Rule
 from rich.text import Text
 
@@ -20,40 +20,47 @@ console = Console()
 
 
 def _strip_slashes(path_str: str) -> str:
+    """Remove leading and trailing slashes from a path string."""
     return path_str.strip("/")
 
 
-def _check_gh_executable_and_notify() -> str | None:
-    """Checks for 'gh' executable and notifies if not found."""
-    gh_executable = shutil.which("gh")
-    if not gh_executable:
-        console.print(
-            Panel(
-                Text.assemble(
-                    ("GitHub CLI ('gh') not found in PATH.\n", "bold red"),
-                    ("Please install it from ", "red"),
-                    (
-                        "https://cli.github.com/",
-                        "link https://cli.github.com/ blue underline",
-                    ),
-                    (" and ensure it's in your PATH.", "red"),
-                ),
-                title="[bold red]Dependency Missing[/bold red]",
-                border_style="red",
-                expand=False,
-            ),
-        )
-        return None
-    return gh_executable
+def _create_error_panel(title: str, message: Text | str, style: str = "red") -> Panel:
+    """Create a standardized error panel."""
+    return Panel(
+        message,
+        title=f"[bold {style}]{title}[/bold {style}]",
+        border_style=style,
+        expand=False,
+    )
+
+
+def _create_gh_not_found_message() -> Text:
+    """Create the standard GitHub CLI not found message."""
+    return Text.assemble(
+        ("GitHub CLI ('gh') not found.\n", "bold red"),
+        ("Please install it from ", "red"),
+        (
+            "https://cli.github.com/",
+            "link https://cli.github.com/ blue underline",
+        ),
+        (" and ensure it's in your PATH.", "red"),
+    )
+
+
+def _check_gh_executable() -> str | None:
+    """Check for 'gh' executable and return path or None if not found."""
+    return shutil.which("gh")
+
+
+def _notify_gh_not_found() -> None:
+    """Display notification that GitHub CLI was not found."""
+    console.print(
+        _create_error_panel("Dependency Missing", _create_gh_not_found_message()),
+    )
 
 
 def _check_gh_auth_status(gh_executable: str) -> bool:
-    """Checks the GitHub CLI authentication status.
-
-    Returns:
-        True if authenticated, False otherwise.
-
-    """
+    """Check the GitHub CLI authentication status."""
     try:
         status_process = subprocess.run(
             [gh_executable, "auth", "status"],
@@ -84,7 +91,7 @@ def _check_gh_auth_status(gh_executable: str) -> bool:
 
 
 def _perform_gh_login_and_verify(gh_executable: str) -> bool:
-    """Performs 'gh auth login' and verifies the status."""
+    """Perform 'gh auth login' and verify the status."""
     console.print(
         Panel(
             Text.assemble(
@@ -128,17 +135,7 @@ def _perform_gh_login_and_verify(gh_executable: str) -> bool:
             style="cyan",
         )
     except FileNotFoundError:
-        console.print(
-            Panel(
-                Text.assemble(
-                    ("GitHub CLI ('gh') not found during login attempt.\n", "bold red"),
-                    ("Please ensure it's installed and in PATH.", "red"),
-                ),
-                title="[bold red]Dependency Missing[/bold red]",
-                border_style="red",
-                expand=False,
-            ),
-        )
+        _notify_gh_not_found()
         return False
     except (subprocess.SubprocessError, OSError) as e:  # For login command
         console.print(
@@ -161,17 +158,19 @@ def _perform_gh_login_and_verify(gh_executable: str) -> bool:
 
 
 def run_gh_auth_login() -> bool:
-    """Attempts to run 'gh auth login' interactively for the user."""
-    gh_executable = _check_gh_executable_and_notify()
+    """Attempt to run 'gh auth login' interactively for the user."""
+    gh_executable = _check_gh_executable()
     if not gh_executable:  # pragma: no cover
+        _notify_gh_not_found()
         return False
     return _perform_gh_login_and_verify(gh_executable)
 
 
 def _check_gh_cli_availability() -> str | None:
-    """Checks for 'gh' CLI and its version, notifying if issues are found."""
-    gh_executable = _check_gh_executable_and_notify()
+    """Check for 'gh' CLI and its version, notifying if issues are found."""
+    gh_executable = _check_gh_executable()
     if not gh_executable:
+        _notify_gh_not_found()
         return None
 
     try:
@@ -182,22 +181,7 @@ def _check_gh_cli_availability() -> str | None:
             check=True,
         )
     except FileNotFoundError:
-        console.print(
-            Panel(
-                Text.assemble(
-                    ("GitHub CLI ('gh') not found.\n", "bold red"),
-                    ("Please install it from ", "red"),
-                    (
-                        "https://cli.github.com/",
-                        "link https://cli.github.com/ blue underline",
-                    ),
-                    (" and then run this script again.", "red"),
-                ),
-                title="[bold red]Dependency Missing[/bold red]",
-                border_style="red",
-                expand=False,
-            ),
-        )
+        _notify_gh_not_found()
         return None
     except subprocess.CalledProcessError:
         console.print(
@@ -208,7 +192,7 @@ def _check_gh_cli_availability() -> str | None:
 
 
 def _handle_gh_authentication_status(gh_executable: str) -> bool:
-    """Checks 'gh auth status' and handles login if necessary."""
+    """Check 'gh auth status' and handle login if necessary."""
     if _check_gh_auth_status(gh_executable):
         return True
 
@@ -255,7 +239,7 @@ def _handle_gh_authentication_status(gh_executable: str) -> bool:
 
 
 def _retrieve_gh_auth_token(gh_executable: str) -> str | None:
-    """Retrieves the GitHub auth token using 'gh auth token'."""
+    """Retrieve the GitHub auth token using 'gh auth token'."""
     try:
         token_process = subprocess.run(
             [gh_executable, "auth", "token"],
@@ -276,18 +260,12 @@ def _retrieve_gh_auth_token(gh_executable: str) -> str | None:
                 "red",
             ),
         )
-        console.print(
-            Panel(
-                error_message,
-                title="[bold red]CLI Token Error[/bold red]",
-                border_style="red",
-            ),
-        )
+        console.print(_create_error_panel("CLI Token Error", error_message))
         return None
 
 
 def get_github_token_from_gh_cli() -> str | None:
-    """Attempts to get an OAuth token using the 'gh' CLI."""
+    """Attempt to get an OAuth token using the 'gh' CLI."""
     gh_executable = _check_gh_cli_availability()
     if not gh_executable:
         return None
@@ -307,13 +285,7 @@ def get_github_token_from_gh_cli() -> str | None:
                 "red",
             ),
         )
-        console.print(
-            Panel(
-                error_message,
-                title="[bold red]CLI Error[/bold red]",
-                border_style="red",
-            ),
-        )
+        console.print(_create_error_panel("CLI Error", error_message))
         return None
     except Exception as e:  # noqa: BLE001
         console.print(
@@ -323,13 +295,13 @@ def get_github_token_from_gh_cli() -> str | None:
         return None
 
 
-def _perform_download_and_save(
-    download_url: str,  # Direct download URL for the file
-    headers: dict[str, str],  # Auth headers
+def _download_and_save_file(
+    download_url: str,
+    headers: dict[str, str],
     output_path: Path,
-    display_name: str,  # For logging
+    display_name: str,
 ) -> bool:
-    """Performs the file download from download_url and saves it to output_path."""
+    """Download a file from download_url and save it to output_path."""
     console.print(
         f"⏳ Downloading [cyan]{display_name}[/cyan] to [green]{output_path}[/green]...",
     )
@@ -364,17 +336,13 @@ def _perform_download_and_save(
 
 def _handle_download_errors(
     e: Exception,
-    download_target_display_name: str,  # For logging
+    target_name: str,
     output_path: Path,
 ) -> None:
-    """Handles various errors that can occur during download."""
+    """Handle various errors that can occur during download."""
     if isinstance(e, requests.exceptions.HTTPError):
-        error_panel_title = "[bold red]HTTP Error[/bold red]"
-        status_not_found = 404
-        status_unauthorized = 401
-        status_forbidden = 403
         error_text = Text.assemble(
-            (f"Failed to download {download_target_display_name}.\n", "bold red"),
+            (f"Failed to download {target_name}.\n", "bold red"),
             (f"Status Code: {e.response.status_code}\n", "red"),
         )
         try:
@@ -394,6 +362,9 @@ def _handle_download_errors(
                 style="red",
             )
 
+        status_not_found = 404
+        status_unauthorized = 401
+        status_forbidden = 403
         if e.response.status_code == status_not_found:
             error_text.append(
                 "Path not found. Please check repository owner, name, path, and branch.",
@@ -410,70 +381,46 @@ def _handle_download_errors(
                 "'gh auth refresh -s repo'.",
                 style="yellow",
             )
-        console.print(
-            Panel(
-                error_text,
-                title=error_panel_title,
-                border_style="red",
-                expand=False,
-            ),
-        )
+        console.print(_create_error_panel("HTTP Error", error_text))
     elif isinstance(e, requests.exceptions.Timeout):
         console.print(
-            Panel(
-                f"🚨 Request timed out for {download_target_display_name}.",
-                title="[bold red]Timeout Error[/bold red]",
-                border_style="red",
+            _create_error_panel(
+                "Timeout Error",
+                f"🚨 Request timed out for {target_name}.",
             ),
         )
     elif isinstance(e, requests.exceptions.ConnectionError):
-        msg = (
-            f"🔗 Connection error for {download_target_display_name}. "
-            "Check your network."
-        )
         console.print(
-            Panel(
-                msg,
-                title="[bold red]Connection Error[/bold red]",
-                border_style="red",
+            _create_error_panel(
+                "Connection Error",
+                f"🔗 Connection error for {target_name}. Check your network.",
             ),
         )
-    elif isinstance(
-        e,
-        requests.exceptions.RequestException,
-    ):
+    elif isinstance(e, requests.exceptions.RequestException):
         console.print(
-            Panel(
-                f"❌ An unexpected request error occurred for {download_target_display_name}: {e}",
-                title="[bold red]Request Error[/bold red]",
-                border_style="red",
+            _create_error_panel(
+                "Request Error",
+                f"❌ An unexpected request error occurred for {target_name}: {e}",
             ),
         )
     elif isinstance(e, OSError):
         console.print(
-            Panel(
-                f"💾 Error writing file to '{output_path}' for {download_target_display_name}: {e}",
-                title="[bold red]File I/O Error[/bold red]",
-                border_style="red",
+            _create_error_panel(
+                "File I/O Error",
+                f"💾 Error writing file to '{output_path}' for {target_name}: {e}",
             ),
         )
     else:
         console.print(
-            Panel(
-                f"🤷 An unexpected error occurred with {download_target_display_name}: {e}",
-                title="[bold red]Unexpected Error[/bold red]",
-                border_style="red",
+            _create_error_panel(
+                "Unexpected Error",
+                f"🤷 An unexpected error occurred with {target_name}: {e}",
             ),
         )
 
 
 def _setup_download_headers() -> dict[str, str] | None:
-    """Set up authentication headers for GitHub API calls.
-
-    Returns:
-        Dictionary of headers if token is available, None otherwise.
-
-    """
+    """Set up authentication headers for GitHub API calls."""
     token = get_github_token_from_gh_cli()
     if not token:
         console.print(
@@ -491,49 +438,33 @@ def _setup_download_headers() -> dict[str, str] | None:
 def _fetch_content_metadata(
     repo_owner: str,
     repo_name: str,
-    file_path: str,
+    normalized_path: str,
     branch: str,
     headers: dict[str, str],
-    display_repo_path: str,
+    display_name: str,
 ) -> dict | list | None:
-    """Fetch metadata for the given path from GitHub API.
-
-    Returns:
-        Content info (dict for file, list for directory) or None on error.
-
-    """
-    metadata_api_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{file_path}?ref={branch}"
+    """Fetch metadata for the given path from GitHub API."""
+    metadata_api_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{normalized_path}?ref={branch}"
 
     try:
-        console.print(f"🔎 Fetching metadata for {display_repo_path}...")
+        console.print(f"🔎 Fetching metadata for {display_name}...")
         with requests.Session() as session:
             response = session.get(metadata_api_url, headers=headers, timeout=30)
             response.raise_for_status()
             return response.json()
     except requests.exceptions.RequestException as e:
-        _handle_download_errors(e, f"metadata for {display_repo_path}", Path())
+        _handle_download_errors(e, f"metadata for {display_name}", Path())
         return None
 
 
 def _download_single_file(
     content_info: dict,
-    clean_file_path: str,
+    normalized_path: str,
     output_path: Path,
     headers: dict[str, str],
 ) -> bool:
-    """Download a single file based on content metadata.
-
-    Args:
-        content_info: File metadata from GitHub API
-        clean_file_path: Cleaned file path
-        output_path: Base output path
-        headers: Auth headers (will be modified for raw download)
-
-    Returns:
-        True if successful, False otherwise.
-
-    """
-    file_name = content_info.get("name", Path(clean_file_path).name)
+    """Download a single file based on content metadata."""
+    file_name = content_info.get("name", Path(normalized_path).name)
     download_url = content_info.get("download_url")
 
     if not download_url:
@@ -569,7 +500,7 @@ def _download_single_file(
         "Accept": "application/octet-stream",
     }
 
-    return _perform_download_and_save(
+    return _download_and_save_file(
         download_url,
         raw_download_headers,
         final_file_output_path,
@@ -581,36 +512,22 @@ def _download_directory(
     content_info: list,
     repo_owner: str,
     repo_name: str,
-    clean_file_path: str,
+    normalized_path: str,
     branch: str,
     output_path: Path,
-    display_repo_path: str,
+    display_name: str,
 ) -> bool:
-    """Download a directory and all its contents recursively.
-
-    Args:
-        content_info: List of directory contents from GitHub API
-        repo_owner: Repository owner
-        repo_name: Repository name
-        clean_file_path: Cleaned file path
-        branch: Branch/ref to download from
-        output_path: Base output path
-        display_repo_path: Display name for logging
-
-    Returns:
-        True if all downloads successful, False if any failed.
-
-    """
+    """Download a directory and all its contents recursively."""
     # Create the base directory for the folder's contents
     target_dir_base = output_path
     if (
-        clean_file_path
+        normalized_path
         and not output_path.suffix
         and (output_path.is_dir() or not output_path.exists())
     ):  # Not downloading repo root
         # If output_path itself is a directory, create the folder inside it.
         # If output_path was given as /path/to/new_folder_name, use new_folder_name.
-        target_dir_base = output_path / Path(clean_file_path).name
+        target_dir_base = output_path / Path(normalized_path).name
         # else: output_path is likely a specific name for the downloaded folder itself.
 
     try:
@@ -627,7 +544,7 @@ def _download_directory(
 
     all_success = True
     console.print(
-        f"📦 Found {len(content_info)} items in directory {display_repo_path}.",
+        f"📦 Found {len(content_info)} items in directory {display_name}.",
     )
 
     for item in content_info:
@@ -660,7 +577,7 @@ def _download_directory(
         if not success:
             all_success = False
             console.print(
-                f"❌ Failed to download {item_type} [yellow]{item_name}[/yellow] from {display_repo_path}",
+                f"❌ Failed to download {item_type} [yellow]{item_name}[/yellow] from {display_name}",
                 style="red",
             )
 
@@ -682,12 +599,12 @@ def download(
         ),
     )
     # Clean the input file_path from leading/trailing slashes for API calls
-    clean_file_path = _strip_slashes(file_path)
-    display_repo_path = f"[cyan]{clean_file_path}[/cyan]"
-    if not clean_file_path:  # Handle case where root of repo is requested
-        display_repo_path = "[cyan](repository root)[/cyan]"
+    normalized_path = _strip_slashes(file_path)
+    display_name = f"[cyan]{normalized_path}[/cyan]"
+    if not normalized_path:  # Handle case where root of repo is requested
+        display_name = "[cyan](repository root)[/cyan]"
 
-    console.print(f"Attempting to download: {display_repo_path}")
+    console.print(f"Attempting to download: {display_name}")
     console.print(f"Branch/Ref: [yellow]{branch}[/yellow]")
     console.print(f"Base output: [green]{output_path}[/green]")
     console.print("-" * 30)
@@ -701,10 +618,10 @@ def download(
     content_info = _fetch_content_metadata(
         repo_owner,
         repo_name,
-        clean_file_path,
+        normalized_path,
         branch,
         common_headers,
-        display_repo_path,
+        display_name,
     )
     if content_info is None:
         return False
@@ -714,7 +631,7 @@ def download(
         # It's a single file
         return _download_single_file(
             content_info,
-            clean_file_path,
+            normalized_path,
             output_path,
             common_headers,
         )
@@ -724,14 +641,14 @@ def download(
             content_info,
             repo_owner,
             repo_name,
-            clean_file_path,
+            normalized_path,
             branch,
             output_path,
-            display_repo_path,
+            display_name,
         )
 
     console.print(
-        f"❌ Unexpected content type received from API for {display_repo_path}.",
+        f"❌ Unexpected content type received from API for {display_name}.",
         style="red",
     )
     console.print(f"Response: {content_info}", style="dim")

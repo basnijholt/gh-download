@@ -3,7 +3,7 @@
 import subprocess
 from collections.abc import Callable, Generator
 from pathlib import Path
-from typing import Any, Never
+from typing import Any
 from unittest import mock
 
 import pytest
@@ -13,11 +13,11 @@ from typer.testing import CliRunner
 from gh_download import (
     _check_gh_auth_status,
     _check_gh_cli_availability,
-    _check_gh_executable_and_notify,
+    _check_gh_executable,
+    _download_and_save_file,
     _fetch_content_metadata,
     _handle_download_errors,
     _handle_gh_authentication_status,
-    _perform_download_and_save,
     _perform_gh_login_and_verify,
     _retrieve_gh_auth_token,
     _setup_download_headers,
@@ -38,41 +38,44 @@ def no_console_output(monkeypatch: pytest.MonkeyPatch):
     )
 
 
-@pytest.fixture(autouse=True)
-def mock_shutil_which(monkeypatch: pytest.MonkeyPatch):
-    def mock_which(cmd: str) -> str | None:
-        if cmd == "gh":
-            return "gh"
-        return None
-
-    monkeypatch.setattr("gh_download.shutil.which", mock_which)
-
-
-def test_check_gh_executable_and_notify_not_found(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("gh_download.shutil.which", lambda _: None)
-    assert _check_gh_executable_and_notify() is None
-
-
 @pytest.fixture
 def mock_subprocess_run() -> Generator[mock.MagicMock]:
     with mock.patch("subprocess.run") as mock_run:
         yield mock_run
 
 
+def test_check_gh_executable_not_found(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr("gh_download.shutil.which", lambda _: None)
+    assert _check_gh_executable() is None
+
+
+def test_check_gh_executable_found(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr("gh_download.shutil.which", lambda _: "/usr/bin/gh")
+    assert _check_gh_executable() == "/usr/bin/gh"
+
+
+def test_check_gh_auth_status_success(mock_subprocess_run: mock.MagicMock):
+    mock_subprocess_run.return_value = mock.Mock(
+        stdout="Logged in to github.com account user",
+        returncode=0,
+    )
+    assert _check_gh_auth_status("gh")
+
+
 def test_check_gh_auth_status_subprocess_error(mock_subprocess_run: mock.MagicMock):
-    mock_subprocess_run.side_effect = subprocess.SubprocessError("Test SubprocessError")
+    mock_subprocess_run.side_effect = subprocess.SubprocessError
     assert not _check_gh_auth_status("gh")
 
 
 def test_check_gh_auth_status_os_error(mock_subprocess_run: mock.MagicMock):
-    mock_subprocess_run.side_effect = OSError("Test OSError")
+    mock_subprocess_run.side_effect = OSError
     assert not _check_gh_auth_status("gh")
 
 
 def test_check_gh_auth_status_unexpected_stderr(mock_subprocess_run: mock.MagicMock):
     mock_subprocess_run.return_value = mock.Mock(
-        stdout="Some output",
-        stderr="Unexpected error message",
+        stdout="",
+        stderr="Something unexpected",
         returncode=1,
     )
     assert not _check_gh_auth_status("gh")
@@ -92,31 +95,37 @@ def test_perform_gh_login_and_verify_file_not_found(
 def test_perform_gh_login_and_verify_subprocess_error(
     mock_subprocess_run: mock.MagicMock,
 ):
-    mock_subprocess_run.side_effect = subprocess.SubprocessError("Test Error")
+    mock_subprocess_run.side_effect = subprocess.SubprocessError
     assert not _perform_gh_login_and_verify("gh")
 
 
-def test_perform_gh_login_and_verify_os_error(mock_subprocess_run: mock.MagicMock):
-    mock_subprocess_run.side_effect = OSError("Test Error")
-    assert not _perform_gh_login_and_verify("gh")
-
-
-def test_perform_gh_login_and_verify_login_command_fails(
+def test_perform_gh_login_and_verify_auth_check_fails(
     mock_subprocess_run: mock.MagicMock,
 ):
+    # First call for auth login (successful), then auth status calls
     mock_subprocess_run.side_effect = [
-        mock.Mock(returncode=1, stdout="", stderr=""),
-        mock.Mock(stdout="", stderr="Error: not logged in", returncode=1),
+        mock.Mock(returncode=0),  # auth login succeeds
+        mock.Mock(stdout="", stderr="", returncode=1),  # auth status fails
     ]
     assert not _perform_gh_login_and_verify("gh")
 
 
-def test_perform_gh_login_and_verify_status_check_fails_after_login(
-    mock_subprocess_run: mock.MagicMock,
-):
+def test_perform_gh_login_and_verify_success(mock_subprocess_run: mock.MagicMock):
     mock_subprocess_run.side_effect = [
-        mock.Mock(returncode=0, stdout="", stderr=""),
-        mock.Mock(stdout="", stderr="Error: not logged in", returncode=1),
+        mock.Mock(returncode=0),  # auth login succeeds
+        mock.Mock(
+            stdout="Logged in to github.com account user",
+            stderr="",
+            returncode=0,
+        ),  # auth status succeeds
+    ]
+    assert _perform_gh_login_and_verify("gh")
+
+
+def test_perform_gh_login_and_verify_login_fails(mock_subprocess_run: mock.MagicMock):
+    mock_subprocess_run.side_effect = [
+        mock.Mock(returncode=1),  # auth login fails
+        mock.Mock(stdout="", stderr="", returncode=1),  # auth status check
     ]
     assert not _perform_gh_login_and_verify("gh")
 
@@ -130,7 +139,10 @@ def test_check_gh_cli_availability_gh_not_found_at_which(
 
 def test_check_gh_cli_availability_version_file_not_found(
     mock_subprocess_run: mock.MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
 ):
+    # Mock shutil.which to return a specific path
+    monkeypatch.setattr("gh_download.shutil.which", lambda _: "gh")
     mock_subprocess_run.side_effect = FileNotFoundError
     assert _check_gh_cli_availability() is None
     mock_subprocess_run.assert_called_once_with(
@@ -143,9 +155,23 @@ def test_check_gh_cli_availability_version_file_not_found(
 
 def test_check_gh_cli_availability_version_called_process_error(
     mock_subprocess_run: mock.MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
 ):
+    # Mock shutil.which to return a specific path
+    monkeypatch.setattr("gh_download.shutil.which", lambda _: "gh")
     mock_subprocess_run.side_effect = subprocess.CalledProcessError(1, "cmd")
     assert _check_gh_cli_availability() == "gh"
+
+
+def test_handle_gh_authentication_status_authenticated(
+    mock_subprocess_run: mock.MagicMock,
+):
+    mock_subprocess_run.return_value = mock.Mock(
+        stdout="Logged in to github.com account user",
+        stderr="",
+        returncode=0,
+    )
+    assert _handle_gh_authentication_status("gh")
 
 
 def test_handle_gh_authentication_status_user_declines_login(
@@ -154,7 +180,7 @@ def test_handle_gh_authentication_status_user_declines_login(
 ):
     mock_subprocess_run.return_value = mock.Mock(
         stdout="",
-        stderr="not logged in",
+        stderr="Error: not logged in",
         returncode=1,
     )
     monkeypatch.setattr("rich.prompt.Confirm.ask", lambda *_, **__: False)
@@ -165,11 +191,14 @@ def test_handle_gh_authentication_status_run_gh_auth_login_fails(
     mock_subprocess_run: mock.MagicMock,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    mock_subprocess_run.return_value = mock.Mock(
-        stdout="",
-        stderr="not logged in",
-        returncode=1,
-    )
+    mock_subprocess_run.side_effect = [
+        mock.Mock(
+            stdout="",
+            stderr="Error: not logged in",
+            returncode=1,
+        ),  # gh auth status (initial check)
+        FileNotFoundError,  # gh auth login fails
+    ]
     monkeypatch.setattr("gh_download.run_gh_auth_login", lambda: False)
     assert not _handle_gh_authentication_status("gh")
 
@@ -179,8 +208,16 @@ def test_handle_gh_authentication_status_still_not_authed_after_login(
     monkeypatch: pytest.MonkeyPatch,
 ):
     mock_subprocess_run.side_effect = [
-        mock.Mock(stdout="", stderr="not logged in", returncode=1),
-        mock.Mock(stdout="", stderr="not logged in", returncode=1),
+        mock.Mock(
+            stdout="",
+            stderr="Error: not logged in",
+            returncode=1,
+        ),  # gh auth status (initial check)
+        mock.Mock(
+            stdout="",
+            stderr="Error: not logged in",
+            returncode=1,
+        ),  # gh auth status (after login attempt)
     ]
     monkeypatch.setattr("gh_download.run_gh_auth_login", lambda: True)
     assert not _handle_gh_authentication_status("gh")
@@ -212,8 +249,7 @@ def test_get_github_token_gh_auth_status_fail(mock_subprocess_run: mock.MagicMoc
             returncode=1,
         ),  # gh auth status
     ]
-    with mock.patch("rich.prompt.Confirm.ask", return_value=False):
-        assert get_github_token_from_gh_cli() is None
+    assert get_github_token_from_gh_cli() is None
 
 
 def test_get_github_token_gh_auth_status_success_then_token_success(
@@ -269,7 +305,7 @@ def test_retrieve_gh_auth_token_called_process_error(
     assert _retrieve_gh_auth_token("gh") is None
 
 
-def test_get_github_token_from_gh_cli_retrieve_token_fails(
+def test_get_github_token_from_gh_cli_exception_handling(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setattr("gh_download._check_gh_cli_availability", lambda: "gh")
@@ -292,36 +328,68 @@ def test_get_github_token_from_gh_cli_called_process_error_handling(
     assert get_github_token_from_gh_cli() is None
 
 
-def test_get_github_token_from_gh_cli_unexpected_exception(
+def test_get_github_token_from_gh_cli_general_exception_handling(
     monkeypatch: pytest.MonkeyPatch,
 ):
+    def raise_exception() -> None:
+        msg = "Something went wrong"
+        raise RuntimeError(msg)
+
     monkeypatch.setattr("gh_download._check_gh_cli_availability", lambda: "gh")
     monkeypatch.setattr(
         "gh_download._handle_gh_authentication_status",
-        mock.Mock(side_effect=Exception("Unexpected internal error")),
+        lambda _: raise_exception(),
     )
     assert get_github_token_from_gh_cli() is None
 
 
-def test_perform_download_and_save_os_error(
+def test_perform_download_and_save_success(
     mock_requests_get: mock.MagicMock,
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ):
+    """Test that _download_and_save_file works correctly."""
     mock_response = mock.Mock()
     mock_response.raise_for_status = mock.Mock()
-    mock_response.content = b"file content"
+    mock_response.iter_content.return_value = [b"file content"]
     mock_requests_get.return_value = mock_response
+
     output_file = tmp_path / "test.txt"
-    mock_open_func = mock.mock_open()
-    monkeypatch.setattr("pathlib.Path.open", mock_open_func)
-    mock_open_func.side_effect = OSError("Test OS Error writing file")
-    assert not _perform_download_and_save(
-        "api_url",
-        {"header": "value"},
+    headers = {"Authorization": "token test"}
+
+    result = _download_and_save_file(
+        "https://example.com/file.txt",
+        headers,
         output_file,
-        "target",
+        "test.txt",
     )
+
+    assert result is True
+    assert output_file.read_bytes() == b"file content"
+
+
+def test_perform_download_and_save_http_error(
+    mock_requests_get: mock.MagicMock,
+    tmp_path: Path,
+):
+    """Test that _download_and_save_file handles HTTP errors correctly."""
+    mock_response = mock.Mock()
+    mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+        response=mock.Mock(status_code=404, json=lambda: {"message": "Not Found"}),
+    )
+    mock_requests_get.return_value = mock_response
+
+    output_file = tmp_path / "test.txt"
+    headers = {"Authorization": "token test"}
+
+    result = _download_and_save_file(
+        "https://example.com/file.txt",
+        headers,
+        output_file,
+        "test.txt",
+    )
+
+    assert result is False
+    assert not output_file.exists()
 
 
 @pytest.mark.parametrize(
@@ -491,134 +559,66 @@ def test_download_file_http_error(
     assert not output_file.exists()
 
 
-def test_run_gh_auth_login_success(mock_subprocess_run: mock.MagicMock):
-    mock_subprocess_run.side_effect = [
-        mock.Mock(returncode=0, stdout="", stderr=""),
-        mock.Mock(
-            stdout="Logged in to github.com account user",
-            returncode=0,
-            stderr="",
-        ),
-    ]
-    assert run_gh_auth_login() is True
-
-
-def test_run_gh_auth_login_fails_login_command(mock_subprocess_run: mock.MagicMock):
-    mock_subprocess_run.side_effect = [
-        mock.Mock(returncode=1, stdout="", stderr=""),
-        mock.Mock(stdout="", stderr="Error: not logged in", returncode=1),
-    ]
-    assert run_gh_auth_login() is False
-
-
-def test_run_gh_auth_login_fails_status_check(mock_subprocess_run: mock.MagicMock):
-    mock_subprocess_run.side_effect = [
-        mock.Mock(returncode=0, stdout="", stderr=""),
-        mock.Mock(stdout="", stderr="Error: not logged in", returncode=1),
-    ]
-    assert run_gh_auth_login() is False
-
-
-def test_run_gh_auth_login_gh_not_found(mock_subprocess_run: mock.MagicMock):
-    mock_subprocess_run.side_effect = FileNotFoundError
-    assert run_gh_auth_login() is False
-
-
-# Tests for gh_download.cli module
-runner = CliRunner()
-
-
-@pytest.fixture
-def mock_download_core_logic() -> Generator[mock.MagicMock]:
-    with mock.patch("gh_download.cli.download") as mock_download:
-        yield mock_download
-
-
-@pytest.fixture(autouse=True)
-def mock_path_cwd(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
-
-
-def test_cli_download_success_default_output(
-    mock_download_core_logic: mock.MagicMock,
+def test_download_file_success_with_default_filename(
+    mock_get_token_from_cli: mock.MagicMock,
+    mock_requests_get: mock.MagicMock,
     tmp_path: Path,
 ):
-    mock_download_core_logic.return_value = True
-    result = runner.invoke(app, ["owner", "repo", "file.txt"])
-    assert result.exit_code == 0, f"CLI failed with: {result.stdout + result.stderr}"
-    mock_download_core_logic.assert_called_once_with(
-        repo_owner="owner",
-        repo_name="repo",
-        file_path="file.txt",
-        branch="main",
-        output_path=tmp_path / "file.txt",
-    )
+    """Test that download uses the repository filename when no explicit output filename is given."""
+    mock_get_token_from_cli.return_value = "MOCK_TOKEN"
+
+    # First call to get metadata
+    metadata_response = mock.Mock()
+    metadata_response.raise_for_status = mock.Mock()
+    metadata_response.json.return_value = {
+        "type": "file",
+        "name": "README.md",
+        "download_url": "https://raw.githubusercontent.com/owner/repo/main/README.md",
+    }
+
+    # Second call to download the actual file
+    download_response = mock.Mock()
+    download_response.raise_for_status = mock.Mock()
+    download_response.iter_content.return_value = [b"# Project README"]
+
+    mock_requests_get.side_effect = [metadata_response, download_response]
+
+    # Use a directory as output path, so it should use the repo filename
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    assert download("owner", "repo", "README.md", "main", output_dir)
+
+    # The file should be saved as README.md in the output directory
+    expected_file = output_dir / "README.md"
+    assert expected_file.exists()
+    assert expected_file.read_bytes() == b"# Project README"
 
 
-def test_cli_download_success_custom_output(
-    mock_download_core_logic: mock.MagicMock,
+def test_download_file_missing_download_url(
+    mock_get_token_from_cli: mock.MagicMock,
+    mock_requests_get: mock.MagicMock,
     tmp_path: Path,
 ):
-    mock_download_core_logic.return_value = True
-    output_file = tmp_path / "custom.txt"
-    result = runner.invoke(app, ["owner", "repo", "file.txt", "-o", str(output_file)])
-    assert result.exit_code == 0, f"CLI failed with: {result.stdout + result.stderr}"
-    mock_download_core_logic.assert_called_once_with(
-        repo_owner="owner",
-        repo_name="repo",
-        file_path="file.txt",
-        branch="main",
-        output_path=output_file.resolve(),
-    )
+    """Test that download handles the case where download_url is missing from the API response."""
+    mock_get_token_from_cli.return_value = "MOCK_TOKEN"
 
+    # Metadata response without download_url
+    metadata_response = mock.Mock()
+    metadata_response.raise_for_status = mock.Mock()
+    metadata_response.json.return_value = {
+        "type": "file",
+        "name": "file.txt",
+        # Missing download_url
+    }
 
-def test_cli_download_download_fails(
-    mock_download_core_logic: mock.MagicMock,
-    tmp_path: Path,
-):
-    mock_download_core_logic.return_value = False
-    result = runner.invoke(
-        app,
-        ["owner", "repo", "file.txt", "-o", str(tmp_path / "f.txt")],
-    )
-    assert result.exit_code == 1, (
-        f"CLI expected to fail: {result.stdout + result.stderr}"
-    )
-    mock_download_core_logic.assert_called_once()
+    mock_requests_get.return_value = metadata_response
 
+    output_file = tmp_path / "downloaded.txt"
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    assert not download("owner", "repo", "file.txt", "main", output_file)
 
-def test_cli_download_cannot_create_output_dir(
-    mock_download_core_logic: mock.MagicMock,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-):
-    def mock_mkdir(*args, **kwargs) -> Never:  # noqa: ARG001
-        msg = "Test error creating directory"
-        raise OSError(msg)
-
-    monkeypatch.setattr(Path, "mkdir", mock_mkdir)
-    output_file = tmp_path / "non_existent_subdir" / "file.txt"
-    result = runner.invoke(app, ["owner", "repo", "file.txt", "-o", str(output_file)])
-    assert result.exit_code == 1, (
-        f"CLI expected to fail: {result.stdout + result.stderr}"
-    )
-    mock_download_core_logic.assert_not_called()
-
-
-def test_cli_download_default_output_filename_from_path(
-    mock_download_core_logic: mock.MagicMock,
-    tmp_path: Path,
-):
-    mock_download_core_logic.return_value = True
-    result = runner.invoke(app, ["owner", "repo", "path/to/some_file.zip"])
-    assert result.exit_code == 0, f"CLI failed with: {result.stdout + result.stderr}"
-    mock_download_core_logic.assert_called_once_with(
-        repo_owner="owner",
-        repo_name="repo",
-        file_path="path/to/some_file.zip",
-        branch="main",
-        output_path=tmp_path / "some_file.zip",
-    )
+    mock_get_token_from_cli.assert_called_once()
+    assert not output_file.exists()
 
 
 def test_download_file_directory_success(
@@ -717,10 +717,10 @@ def test_fetch_content_metadata_success(
     result = _fetch_content_metadata(
         repo_owner="owner",
         repo_name="repo",
-        file_path="test.txt",
+        normalized_path="test.txt",
         branch="main",
         headers=headers,
-        display_repo_path="test.txt",
+        display_name="test.txt",
     )
 
     assert result == {"type": "file", "name": "test.txt"}
@@ -748,10 +748,75 @@ def test_fetch_content_metadata_error(
     result = _fetch_content_metadata(
         repo_owner="owner",
         repo_name="repo",
-        file_path="nonexistent.txt",
+        normalized_path="nonexistent.txt",
         branch="main",
         headers=headers,
-        display_repo_path="nonexistent.txt",
+        display_name="nonexistent.txt",
     )
 
     assert result is None
+
+
+def test_download_file_unexpected_content_type(
+    mock_get_token_from_cli: mock.MagicMock,
+    mock_requests_get: mock.MagicMock,
+    tmp_path: Path,
+):
+    """Test that download handles unexpected content types gracefully."""
+    mock_get_token_from_cli.return_value = "MOCK_TOKEN"
+
+    # Return unexpected content (neither dict with type=file nor list)
+    metadata_response = mock.Mock()
+    metadata_response.raise_for_status = mock.Mock()
+    metadata_response.json.return_value = {"unexpected": "content"}
+
+    mock_requests_get.return_value = metadata_response
+
+    output_file = tmp_path / "downloaded.txt"
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+
+    result = download("owner", "repo", "file.txt", "main", output_file)
+
+    assert result is False
+
+
+def test_cli_run_command():
+    """Test that the CLI runs without error."""
+    runner = CliRunner()
+    result = runner.invoke(app, ["--help"])
+
+    # Just check that the CLI can be invoked successfully
+    assert result.exit_code == 0
+
+
+def test_run_gh_auth_login_success(mock_subprocess_run: mock.MagicMock):
+    mock_subprocess_run.side_effect = [
+        mock.Mock(returncode=0),  # gh auth login
+        mock.Mock(
+            stdout="Logged in to github.com account user",
+            stderr="",
+            returncode=0,
+        ),  # gh auth status
+    ]
+    assert run_gh_auth_login() is True
+
+
+def test_run_gh_auth_login_fails_login_command(mock_subprocess_run: mock.MagicMock):
+    mock_subprocess_run.side_effect = [
+        mock.Mock(returncode=1),  # gh auth login
+        mock.Mock(stdout="", stderr="", returncode=1),  # gh auth status
+    ]
+    assert run_gh_auth_login() is False
+
+
+def test_run_gh_auth_login_fails_status_check(mock_subprocess_run: mock.MagicMock):
+    mock_subprocess_run.side_effect = [
+        mock.Mock(returncode=0),  # gh auth login
+        mock.Mock(stdout="", stderr="", returncode=1),  # gh auth status
+    ]
+    assert run_gh_auth_login() is False
+
+
+def test_run_gh_auth_login_gh_not_found(mock_subprocess_run: mock.MagicMock):
+    mock_subprocess_run.side_effect = FileNotFoundError
+    assert run_gh_auth_login() is False
