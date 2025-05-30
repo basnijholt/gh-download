@@ -19,7 +19,7 @@ app = typer.Typer(
 )
 
 
-@app.command(name="get", help="Download a specific file from a GitHub repository.")
+@app.command(help="Download a specific file from a GitHub repository.")
 def get(
     repo_owner: str = typer.Argument(
         ...,

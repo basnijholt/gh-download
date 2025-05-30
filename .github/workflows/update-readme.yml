@@ -8,7 +8,7 @@ on:
 
 jobs:
   update_readme:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -23,7 +23,11 @@ jobs:
         uses: astral-sh/setup-uv@v6
 
       - name: Run markdown-code-runner
-        run: uvx --with . markdown-code-runner README.md
+        env:
+          TERM: dumb
+          NO_COLOR: 1
+        run: |
+          uvx --with . markdown-code-runner README.md
 
       - name: Commit updated README.md
         id: commit
