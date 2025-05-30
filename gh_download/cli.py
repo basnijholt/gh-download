@@ -15,6 +15,7 @@ app = typer.Typer(
     rich_markup_mode="rich",
     help="🚀 GitHub Downloader (gh-download): A tool to download files from GitHub repos using 'gh' CLI auth.",
     no_args_is_help=True,
+    context_settings={"help_option_names": ["-h", "--help"]},
 )
 
 

@@ -789,6 +789,35 @@ def test_cli_run_command():
     assert result.exit_code == 0
 
 
+def test_cli_help_short_option():
+    """Test that -h works as well as --help."""
+    runner = CliRunner()
+
+    # Test -h
+    result_short = runner.invoke(app, ["-h"])
+    assert result_short.exit_code == 0
+
+    # Test --help
+    result_long = runner.invoke(app, ["--help"])
+    assert result_long.exit_code == 0
+
+    # Both should produce similar output (both should be successful)
+    assert result_short.exit_code == result_long.exit_code
+
+
+def test_cli_get_command_help():
+    """Test that get subcommand supports both -h and --help."""
+    runner = CliRunner()
+
+    # Test get -h
+    result_short = runner.invoke(app, ["get", "-h"])
+    assert result_short.exit_code == 0
+
+    # Test get --help
+    result_long = runner.invoke(app, ["get", "--help"])
+    assert result_long.exit_code == 0
+
+
 def test_run_gh_auth_login_success(mock_subprocess_run: mock.MagicMock):
     mock_subprocess_run.side_effect = [
         mock.Mock(returncode=0),  # gh auth login
