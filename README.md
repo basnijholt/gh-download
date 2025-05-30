@@ -2,6 +2,10 @@
 
 `gh-download` is a Python command-line tool that allows you to download files from GitHub repositories, including private ones, by leveraging your existing `gh` (GitHub CLI) authentication.
 
+> [!TIP]
+> If using `uv`, just run `uvx gh-download --help` to see the help message.
+> To install the GitHub CLI, run `uvx dotbins get cli/cli --name gh`.
+
 <details><summary><b><u>[ToC]</u></b> 📚</summary>
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
