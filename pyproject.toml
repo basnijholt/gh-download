@@ -8,7 +8,6 @@ description = "A CLI tool to download files from GitHub repositories, including 
 dynamic = ["version"]
 authors = [{ name = "Bas Nijholt", email = "bas@nijho.lt" }]
 dependencies = [
-    "dotbins>=2.3.0",
     "requests>=2.32.3",
     "rich>=14.0.0",
     "typer>=0.12.3",
