@@ -11,21 +11,23 @@ import requests
 from typer.testing import CliRunner
 
 from gh_download import (
-    _check_gh_auth_status,
-    _check_gh_cli_availability,
-    _check_gh_executable,
     _download_and_save_file,
     _fetch_content_metadata,
     _handle_download_errors,
+    download,
+)
+from gh_download.cli import app
+from gh_download.gh import (
+    _check_gh_auth_status,
+    _check_gh_cli_availability,
+    _check_gh_executable,
     _handle_gh_authentication_status,
     _perform_gh_login_and_verify,
     _retrieve_gh_auth_token,
     _setup_download_headers,
-    download,
     get_github_token_from_gh_cli,
     run_gh_auth_login,
 )
-from gh_download.cli import app
 
 
 # Suppress console output during tests for cleaner test runs
@@ -45,12 +47,12 @@ def mock_subprocess_run() -> Generator[mock.MagicMock]:
 
 
 def test_check_gh_executable_not_found(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("gh_download.shutil.which", lambda _: None)
+    monkeypatch.setattr("gh_download.gh.shutil.which", lambda _: None)
     assert _check_gh_executable() is None
 
 
 def test_check_gh_executable_found(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("gh_download.shutil.which", lambda _: "/usr/bin/gh")
+    monkeypatch.setattr("gh_download.gh.shutil.which", lambda _: "/usr/bin/gh")
     assert _check_gh_executable() == "/usr/bin/gh"
 
 
@@ -133,7 +135,7 @@ def test_perform_gh_login_and_verify_login_fails(mock_subprocess_run: mock.Magic
 def test_check_gh_cli_availability_gh_not_found_at_which(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setattr("gh_download.shutil.which", lambda _: None)
+    monkeypatch.setattr("gh_download.gh.shutil.which", lambda _: None)
     assert _check_gh_cli_availability() is None
 
 
@@ -142,7 +144,7 @@ def test_check_gh_cli_availability_version_file_not_found(
     monkeypatch: pytest.MonkeyPatch,
 ):
     # Mock shutil.which to return a specific path
-    monkeypatch.setattr("gh_download.shutil.which", lambda _: "gh")
+    monkeypatch.setattr("gh_download.gh.shutil.which", lambda _: "gh")
     mock_subprocess_run.side_effect = FileNotFoundError
     assert _check_gh_cli_availability() is None
     mock_subprocess_run.assert_called_once_with(
@@ -158,7 +160,7 @@ def test_check_gh_cli_availability_version_called_process_error(
     monkeypatch: pytest.MonkeyPatch,
 ):
     # Mock shutil.which to return a specific path
-    monkeypatch.setattr("gh_download.shutil.which", lambda _: "gh")
+    monkeypatch.setattr("gh_download.gh.shutil.which", lambda _: "gh")
     mock_subprocess_run.side_effect = subprocess.CalledProcessError(1, "cmd")
     assert _check_gh_cli_availability() == "gh"
 
@@ -199,7 +201,7 @@ def test_handle_gh_authentication_status_run_gh_auth_login_fails(
         ),  # gh auth status (initial check)
         FileNotFoundError,  # gh auth login fails
     ]
-    monkeypatch.setattr("gh_download.run_gh_auth_login", lambda: False)
+    monkeypatch.setattr("gh_download.gh.run_gh_auth_login", lambda: False)
     assert not _handle_gh_authentication_status("gh")
 
 
@@ -219,7 +221,7 @@ def test_handle_gh_authentication_status_still_not_authed_after_login(
             returncode=1,
         ),  # gh auth status (after login attempt)
     ]
-    monkeypatch.setattr("gh_download.run_gh_auth_login", lambda: True)
+    monkeypatch.setattr("gh_download.gh.run_gh_auth_login", lambda: True)
     assert not _handle_gh_authentication_status("gh")
 
 
@@ -231,7 +233,7 @@ def mock_requests_get() -> Generator[mock.MagicMock]:
 
 @pytest.fixture
 def mock_get_token_from_cli() -> Generator[mock.MagicMock]:
-    with mock.patch("gh_download.get_github_token_from_gh_cli") as mock_get_token:
+    with mock.patch("gh_download.gh.get_github_token_from_gh_cli") as mock_get_token:
         yield mock_get_token
 
 
@@ -308,19 +310,19 @@ def test_retrieve_gh_auth_token_called_process_error(
 def test_get_github_token_from_gh_cli_exception_handling(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setattr("gh_download._check_gh_cli_availability", lambda: "gh")
-    monkeypatch.setattr("gh_download._handle_gh_authentication_status", lambda _: True)
-    monkeypatch.setattr("gh_download._retrieve_gh_auth_token", lambda _: None)
+    monkeypatch.setattr("gh_download.gh._check_gh_cli_availability", lambda: "gh")
+    monkeypatch.setattr("gh_download.gh._handle_gh_authentication_status", lambda _: True)
+    monkeypatch.setattr("gh_download.gh._retrieve_gh_auth_token", lambda _: None)
     assert get_github_token_from_gh_cli() is None
 
 
 def test_get_github_token_from_gh_cli_called_process_error_handling(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setattr("gh_download._check_gh_cli_availability", lambda: "gh")
-    monkeypatch.setattr("gh_download._handle_gh_authentication_status", lambda _: True)
+    monkeypatch.setattr("gh_download.gh._check_gh_cli_availability", lambda: "gh")
+    monkeypatch.setattr("gh_download.gh._handle_gh_authentication_status", lambda _: True)
     monkeypatch.setattr(
-        "gh_download._retrieve_gh_auth_token",
+        "gh_download.gh._retrieve_gh_auth_token",
         mock.Mock(
             side_effect=subprocess.CalledProcessError(1, "cmd", stderr="Token error"),
         ),
@@ -335,9 +337,9 @@ def test_get_github_token_from_gh_cli_general_exception_handling(
         msg = "Something went wrong"
         raise RuntimeError(msg)
 
-    monkeypatch.setattr("gh_download._check_gh_cli_availability", lambda: "gh")
+    monkeypatch.setattr("gh_download.gh._check_gh_cli_availability", lambda: "gh")
     monkeypatch.setattr(
-        "gh_download._handle_gh_authentication_status",
+        "gh_download.gh._handle_gh_authentication_status",
         lambda _: raise_exception(),
     )
     assert get_github_token_from_gh_cli() is None

@@ -389,6 +389,21 @@ wheels = [
 ]
 
 [[package]]
+name = "dotbins"
+version = "2.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyyaml" },
+    { name = "requests" },
+    { name = "rich" },
+    { name = "rich-argparse" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c7/13/0856f66fdb60872ab892b89b0ddf2e21bd4affc1e74cb6f614912c0b3537/dotbins-2.3.0.tar.gz", hash = "sha256:4b6c34698ad41545ecd742bd8a1968bd5a33a450eea973cacb67004439ee3c06", size = 105786, upload-time = "2025-05-12T17:24:43.217Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3e/8d/3c00197401a103a2640145f19625bb4d418777fa640f20088833b301d58d/dotbins-2.3.0-py3-none-any.whl", hash = "sha256:a9045136fcac8efff3040d4ca26f334f154903468fb4ddd6a3ac1032328b1e90", size = 54834, upload-time = "2025-05-12T17:24:41.796Z" },
+]
+
+[[package]]
 name = "executing"
 version = "2.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -428,6 +443,7 @@ wheels = [
 name = "gh-download"
 source = { editable = "." }
 dependencies = [
+    { name = "dotbins" },
     { name = "requests" },
     { name = "rich" },
     { name = "typer" },
@@ -467,6 +483,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "dotbins", specifier = ">=2.3.0" },
     { name = "gh-download", extras = ["test"], marker = "extra == 'dev'" },
     { name = "markdown-code-runner", marker = "extra == 'dev'" },
     { name = "notebook", marker = "extra == 'dev'" },
@@ -1462,6 +1479,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/a1/53/830aa4c3066a8ab0ae9a9955976fb770fe9c6102117c8ec4ab3ea62d89e8/rich-14.0.0.tar.gz", hash = "sha256:82f1bc23a6a21ebca4ae0c45af9bdbc492ed20231dcb63f297d6d1021a9d5725", size = 224078, upload-time = "2025-03-30T14:15:14.23Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0d/9b/63f4c7ebc259242c89b3acafdb37b41d1185c07ff0011164674e9076b491/rich-14.0.0-py3-none-any.whl", hash = "sha256:1c9491e1951aac09caffd42f448ee3d04e58923ffe14993f6e83068dc395d7e0", size = 243229, upload-time = "2025-03-30T14:15:12.283Z" },
+]
+
+[[package]]
+name = "rich-argparse"
+version = "1.7.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "rich" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/71/a6/34460d81e5534f6d2fc8e8d91ff99a5835fdca53578eac89e4f37b3a7c6d/rich_argparse-1.7.1.tar.gz", hash = "sha256:d7a493cde94043e41ea68fb43a74405fa178de981bf7b800f7a3bd02ac5c27be", size = 38094, upload-time = "2025-05-25T20:20:35.335Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/31/f6/5fc0574af5379606ffd57a4b68ed88f9b415eb222047fe023aefcc00a648/rich_argparse-1.7.1-py3-none-any.whl", hash = "sha256:a8650b42e4a4ff72127837632fba6b7da40784842f08d7395eb67a9cbd7b4bf9", size = 25357, upload-time = "2025-05-25T20:20:33.793Z" },
 ]
 
 [[package]]
