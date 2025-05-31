@@ -8,7 +8,9 @@ import typer
 from rich.panel import Panel
 from rich.text import Text
 
-from gh_download import console, download
+from gh_download import download
+
+from .rich import console
 
 app = typer.Typer(
     add_completion=False,
