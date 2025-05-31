@@ -40,10 +40,7 @@ def _create_gh_not_found_message() -> Text:
     return Text.assemble(
         ("GitHub CLI ('gh') not found.\n", "bold red"),
         ("Please install it from ", "red"),
-        (
-            "https://cli.github.com/",
-            "link https://cli.github.com/ blue underline",
-        ),
+        ("https://cli.github.com/", "link https://cli.github.com/ blue underline"),
         (" and ensure it's in your PATH.", "red"),
     )
 
@@ -70,18 +67,12 @@ def _check_gh_auth_status(gh_executable: str) -> bool:
             check=False,  # We check status manually, don't raise on non-zero
         )
     except (subprocess.SubprocessError, OSError) as e:
-        console.print(
-            f"🚨 Error checking 'gh auth status': {e}",
-            style="bold red",
-        )
+        console.print(f"🚨 Error checking 'gh auth status': {e}", style="bold red")
         return False
     else:
         if "Logged in to github.com account" in status_process.stdout:
             return True
-        if (
-            status_process.stderr
-            and "not logged in" not in status_process.stderr.lower()
-        ):
+        if status_process.stderr and "not logged in" not in status_process.stderr.lower():
             console.print(
                 Text(
                     f"Unexpected stderr from 'gh auth status': {status_process.stderr.strip()}",
@@ -97,11 +88,7 @@ def _perform_gh_login_and_verify(gh_executable: str) -> bool:
         Panel(
             Text.assemble(
                 ("Attempting to initiate GitHub CLI login.\n", "bold yellow"),
-                (
-                    "Please follow the prompts from 'gh auth login' "
-                    "in your terminal.\n",
-                    "yellow",
-                ),
+                ("Please follow the prompts from 'gh auth login' in your terminal.\n", "yellow"),
                 ("You may need to open a web browser and enter a code.", "yellow"),
             ),
             title="[bold blue]Initiating 'gh auth login'[/bold blue]",
@@ -109,14 +96,7 @@ def _perform_gh_login_and_verify(gh_executable: str) -> bool:
         ),
     )
     try:
-        login_command = [
-            gh_executable,
-            "auth",
-            "login",
-            "--hostname",
-            "github.com",
-            "--web",
-        ]
+        login_command = [gh_executable, "auth", "login", "--hostname", "github.com", "--web"]
         console.print(f"Executing: `{' '.join(login_command)}`", style="dim")
         process = subprocess.run(
             login_command,
@@ -146,15 +126,9 @@ def _perform_gh_login_and_verify(gh_executable: str) -> bool:
         return False
     else:  # Login command didn't raise an exception
         if _check_gh_auth_status(gh_executable):
-            console.print(
-                "👍 Successfully logged in to GitHub CLI!",
-                style="bold green",
-            )
+            console.print("👍 Successfully logged in to GitHub CLI!", style="bold green")
             return True
-        console.print(
-            "❌ Still not logged in after 'gh auth login' attempt.",
-            style="bold red",
-        )
+        console.print("❌ Still not logged in after 'gh auth login' attempt.", style="bold red")
         return False
 
 
@@ -175,12 +149,7 @@ def _check_gh_cli_availability() -> str | None:
         return None
 
     try:
-        subprocess.run(
-            [gh_executable, "--version"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+        subprocess.run([gh_executable, "--version"], capture_output=True, text=True, check=True)
     except FileNotFoundError:
         _notify_gh_not_found()
         return None
@@ -200,8 +169,7 @@ def _handle_gh_authentication_status(gh_executable: str) -> bool:
     login_instructions = Text.assemble(
         ("You are not logged into the GitHub CLI.\n", "bold yellow"),
         (
-            "This script needs access to GitHub to download files from "
-            "private repositories.",
+            "This script needs access to GitHub to download files from private repositories.",
             "yellow",
         ),
     )
@@ -232,9 +200,7 @@ def _handle_gh_authentication_status(gh_executable: str) -> bool:
             return False
         console.print("✅ Authentication successful!", style="bold green")
         return True
-    msg = (
-        "Okay, please log in manually using 'gh auth login' and then re-run the script."
-    )
+    msg = "Okay, please log in manually using 'gh auth login' and then re-run the script."
     console.print(msg, style="yellow")
     return False
 
@@ -248,10 +214,7 @@ def _retrieve_gh_auth_token(gh_executable: str) -> str | None:
             text=True,
             check=True,
         )
-        console.print(
-            "🔑 Successfully retrieved GitHub token via 'gh' CLI.",
-            style="green",
-        )
+        console.print("🔑 Successfully retrieved GitHub token via 'gh' CLI.", style="green")
         return token_process.stdout.strip()
     except subprocess.CalledProcessError as e:
         error_message = Text.assemble(
@@ -277,14 +240,8 @@ def get_github_token_from_gh_cli() -> str | None:
         return _retrieve_gh_auth_token(gh_executable)
     except subprocess.CalledProcessError as e:
         error_message = Text.assemble(
-            (
-                f"Error interacting with 'gh' CLI during '{' '.join(e.cmd)}':\n",
-                "bold red",
-            ),
-            (
-                f"Stderr: {e.stderr.strip() if e.stderr else 'No stderr output.'}",
-                "red",
-            ),
+            (f"Error interacting with 'gh' CLI during '{' '.join(e.cmd)}':\n", "bold red"),
+            (f"Stderr: {e.stderr.strip() if e.stderr else 'No stderr output.'}", "red"),
         )
         console.print(_create_error_panel("CLI Error", error_message))
         return None
@@ -316,12 +273,7 @@ def _download_and_save_file(
 
         with requests.Session() as session:
             # Use stream=True for potentially large files
-            response = session.get(
-                download_url,
-                headers=headers,
-                timeout=60,
-                stream=True,
-            )
+            response = session.get(download_url, headers=headers, timeout=60, stream=True)
             response.raise_for_status()
 
             with output_path.open("wb") as f:
@@ -384,17 +336,13 @@ def _handle_download_errors(
                 style="yellow",
             )
             error_text.append(
-                "You might need to re-run 'gh auth login' or "
-                "'gh auth refresh -s repo'.",
+                "You might need to re-run 'gh auth login' or 'gh auth refresh -s repo'.",
                 style="yellow",
             )
         console.print(_create_error_panel("HTTP Error", error_text))
     elif isinstance(e, requests.exceptions.Timeout):
         console.print(
-            _create_error_panel(
-                "Timeout Error",
-                f"🚨 Request timed out for {target_name}.",
-            ),
+            _create_error_panel("Timeout Error", f"🚨 Request timed out for {target_name}."),
         )
     elif isinstance(e, requests.exceptions.ConnectionError):
         console.print(
@@ -430,16 +378,10 @@ def _setup_download_headers() -> dict[str, str] | None:
     """Set up authentication headers for GitHub API calls."""
     token = get_github_token_from_gh_cli()
     if not token:
-        console.print(
-            "❌ Could not obtain GitHub token. Download aborted.",
-            style="bold red",
-        )
+        console.print("❌ Could not obtain GitHub token. Download aborted.", style="bold red")
         return None
 
-    return {
-        "Authorization": f"token {token}",
-        "Accept": "application/vnd.github.v3+json",
-    }
+    return {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
 
 
 def _fetch_content_metadata(
@@ -480,18 +422,13 @@ def _download_single_file(
     download_url = content_info.get("download_url")
 
     if not download_url:
-        console.print(
-            f"❌ Could not get download_url for file: {file_name}",
-            style="red",
-        )
+        console.print(f"❌ Could not get download_url for file: {file_name}", style="red")
         return False
 
     # Determine the final output path for the file
     final_file_output_path = output_path
     if output_path.is_dir() or (
-        not output_path.exists()
-        and output_path.name != file_name
-        and not output_path.suffix
+        not output_path.exists() and output_path.name != file_name and not output_path.suffix
     ):
         # If output_path is an existing dir, or a non-existent path that looks like a dir
         final_file_output_path = output_path / file_name
@@ -543,9 +480,7 @@ def _download_directory(
     if (
         normalized_path  # Not downloading repo root
         and not output_path.suffix  # output_path is not a file
-        and (
-            output_path.is_dir() or not output_path.exists()
-        )  # output_path is/will be a directory
+        and (output_path.is_dir() or not output_path.exists())  # output_path is/will be a directory
         and output_path.name
         != folder_name  # Avoid double nesting when CLI already set the right name
     ):
@@ -554,15 +489,10 @@ def _download_directory(
         target_dir_base = output_path / folder_name
 
     try:
-        console.print(
-            f"📁 Creating local directory: [green]{target_dir_base}[/green]",
-        )
+        console.print(f"📁 Creating local directory: [green]{target_dir_base}[/green]")
         target_dir_base.mkdir(parents=True, exist_ok=True)
     except OSError as e:
-        console.print(
-            f"❌ Error creating base directory '{target_dir_base}': {e}",
-            style="red",
-        )
+        console.print(f"❌ Error creating base directory '{target_dir_base}': {e}", style="red")
         return False
 
     # Get headers once for the whole directory download if not provided
@@ -574,9 +504,7 @@ def _download_directory(
     all_success = True
     total_items = len(content_info)
 
-    console.print(
-        f"📦 Found {total_items} items in directory {display_name}.",
-    )
+    console.print(f"📦 Found {total_items} items in directory {display_name}.")
 
     if show_progress:
         # Use Rich Progress for visual feedback (only at top level)
@@ -592,10 +520,7 @@ def _download_directory(
                 item_path_in_repo = item.get("path")  # Full path in repo
 
                 if not item_name or not item_type or not item_path_in_repo:
-                    console.print(
-                        f"⚠️ Skipping item with missing info: {item}",
-                        style="yellow",
-                    )
+                    console.print(f"⚠️ Skipping item with missing info: {item}", style="yellow")
                     all_success = False
                     progress.advance(task)
                     continue
@@ -635,16 +560,11 @@ def _download_directory(
             item_path_in_repo = item.get("path")  # Full path in repo
 
             if not item_name or not item_type or not item_path_in_repo:
-                console.print(
-                    f"⚠️ Skipping item with missing info: {item}",
-                    style="yellow",
-                )
+                console.print(f"⚠️ Skipping item with missing info: {item}", style="yellow")
                 all_success = False
                 continue
 
-            console.print(
-                f"📄 Processing [blue]{item_type}[/blue]: [yellow]{item_name}[/yellow]",
-            )
+            console.print(f"📄 Processing [blue]{item_type}[/blue]: [yellow]{item_name}[/yellow]")
 
             # Recursively call download for each item with quiet mode and shared headers
             success = download(
@@ -753,10 +673,7 @@ def download(
             show_progress=show_progress,  # Pass progress setting
         )
 
-    console.print(
-        f"❌ Unexpected content type received from API for {display_name}.",
-        style="red",
-    )
+    console.print(f"❌ Unexpected content type received from API for {display_name}.", style="red")
     console.print(f"Response: {content_info}", style="dim")
     return False
 
