@@ -9,7 +9,7 @@ from rich.panel import Panel
 from rich.prompt import Confirm
 from rich.text import Text
 
-from .rich import _create_error_panel, console
+from .rich import console, create_error_panel
 
 
 def _create_gh_not_found_message() -> Text:
@@ -30,7 +30,7 @@ def _check_gh_executable() -> str | None:
 def _notify_gh_not_found() -> None:
     """Display notification that GitHub CLI was not found."""
     console.print(
-        _create_error_panel("Dependency Missing", _create_gh_not_found_message()),
+        create_error_panel("Dependency Missing", _create_gh_not_found_message()),
     )
 
 
@@ -109,7 +109,7 @@ def _perform_gh_login_and_verify(gh_executable: str) -> bool:
         return False
 
 
-def run_gh_auth_login() -> bool:
+def _run_gh_auth_login() -> bool:
     """Attempt to run 'gh auth login' interactively for the user."""
     gh_executable = _check_gh_executable()
     if not gh_executable:  # pragma: no cover
@@ -164,7 +164,7 @@ def _handle_gh_authentication_status(gh_executable: str) -> bool:
         default=True,
         console=console,
     ):
-        if not run_gh_auth_login():
+        if not _run_gh_auth_login():
             msg = (
                 "Login attempt was not successful. Please try 'gh auth login' "
                 "manually in your terminal."
@@ -201,11 +201,11 @@ def _retrieve_gh_auth_token(gh_executable: str) -> str | None:
                 "red",
             ),
         )
-        console.print(_create_error_panel("CLI Token Error", error_message))
+        console.print(create_error_panel("CLI Token Error", error_message))
         return None
 
 
-def get_github_token_from_gh_cli() -> str | None:
+def _github_token_from_gh_cli() -> str | None:
     """Attempt to get an OAuth token using the 'gh' CLI."""
     gh_executable = _check_gh_cli_availability()
     if not gh_executable:
@@ -220,19 +220,19 @@ def get_github_token_from_gh_cli() -> str | None:
             (f"Error interacting with 'gh' CLI during '{' '.join(e.cmd)}':\n", "bold red"),
             (f"Stderr: {e.stderr.strip() if e.stderr else 'No stderr output.'}", "red"),
         )
-        console.print(_create_error_panel("CLI Error", error_message))
+        console.print(create_error_panel("CLI Error", error_message))
         return None
     except Exception as e:  # noqa: BLE001
         console.print(
-            f"🚨 An unexpected error occurred in get_github_token_from_gh_cli: {e}",
+            f"🚨 An unexpected error occurred in _github_token_from_gh_cli: {e}",
             style="bold red",
         )
         return None
 
 
-def _setup_download_headers() -> dict[str, str] | None:
+def setup_download_headers() -> dict[str, str] | None:
     """Set up authentication headers for GitHub API calls."""
-    token = get_github_token_from_gh_cli()
+    token = _github_token_from_gh_cli()
     if not token:
         console.print("❌ Could not obtain GitHub token. Download aborted.", style="bold red")
         return None

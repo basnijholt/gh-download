@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 console = Console()
 
 
-def _create_error_panel(title: str, message: Text | str, style: str = "red") -> Panel:
+def create_error_panel(title: str, message: Text | str, style: str = "red") -> Panel:
     """Create a standardized error panel."""
     return Panel(
         message,

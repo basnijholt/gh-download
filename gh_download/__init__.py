@@ -11,8 +11,8 @@ from rich.progress import Progress
 from rich.rule import Rule
 from rich.text import Text
 
-from .gh import _setup_download_headers
-from .rich import _create_error_panel, console
+from .gh import setup_download_headers
+from .rich import console, create_error_panel
 
 __version__ = version("gh_download")
 
@@ -108,35 +108,35 @@ def _handle_download_errors(
                 "You might need to re-run 'gh auth login' or 'gh auth refresh -s repo'.",
                 style="yellow",
             )
-        console.print(_create_error_panel("HTTP Error", error_text))
+        console.print(create_error_panel("HTTP Error", error_text))
     elif isinstance(e, requests.exceptions.Timeout):
         console.print(
-            _create_error_panel("Timeout Error", f"🚨 Request timed out for {target_name}."),
+            create_error_panel("Timeout Error", f"🚨 Request timed out for {target_name}."),
         )
     elif isinstance(e, requests.exceptions.ConnectionError):
         console.print(
-            _create_error_panel(
+            create_error_panel(
                 "Connection Error",
                 f"🔗 Connection error for {target_name}. Check your network.",
             ),
         )
     elif isinstance(e, requests.exceptions.RequestException):
         console.print(
-            _create_error_panel(
+            create_error_panel(
                 "Request Error",
                 f"❌ An unexpected request error occurred for {target_name}: {e}",
             ),
         )
     elif isinstance(e, OSError):
         console.print(
-            _create_error_panel(
+            create_error_panel(
                 "File I/O Error",
                 f"💾 Error writing file to '{output_path}' for {target_name}: {e}",
             ),
         )
     else:
         console.print(
-            _create_error_panel(
+            create_error_panel(
                 "Unexpected Error",
                 f"🤷 An unexpected error occurred with {target_name}: {e}",
             ),
@@ -256,7 +256,7 @@ def _download_directory(
 
     # Get headers once for the whole directory download if not provided
     if headers is None:
-        headers = _setup_download_headers()
+        headers = setup_download_headers()
         if not headers:
             return False
 
@@ -384,7 +384,7 @@ def download(
 
     # Set up authentication headers (only if not provided)
     if headers is None:
-        headers = _setup_download_headers()
+        headers = setup_download_headers()
         if not headers:
             return False
     else:

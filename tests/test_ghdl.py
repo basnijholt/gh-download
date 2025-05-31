@@ -21,12 +21,12 @@ from gh_download.gh import (
     _check_gh_auth_status,
     _check_gh_cli_availability,
     _check_gh_executable,
+    _github_token_from_gh_cli,
     _handle_gh_authentication_status,
     _perform_gh_login_and_verify,
     _retrieve_gh_auth_token,
-    _setup_download_headers,
-    get_github_token_from_gh_cli,
-    run_gh_auth_login,
+    _run_gh_auth_login,
+    setup_download_headers,
 )
 
 
@@ -201,7 +201,7 @@ def test_handle_gh_authentication_status_run_gh_auth_login_fails(
         ),  # gh auth status (initial check)
         FileNotFoundError,  # gh auth login fails
     ]
-    monkeypatch.setattr("gh_download.gh.run_gh_auth_login", lambda: False)
+    monkeypatch.setattr("gh_download.gh._run_gh_auth_login", lambda: False)
     assert not _handle_gh_authentication_status("gh")
 
 
@@ -221,7 +221,7 @@ def test_handle_gh_authentication_status_still_not_authed_after_login(
             returncode=1,
         ),  # gh auth status (after login attempt)
     ]
-    monkeypatch.setattr("gh_download.gh.run_gh_auth_login", lambda: True)
+    monkeypatch.setattr("gh_download.gh._run_gh_auth_login", lambda: True)
     assert not _handle_gh_authentication_status("gh")
 
 
@@ -233,13 +233,13 @@ def mock_requests_get() -> Generator[mock.MagicMock]:
 
 @pytest.fixture
 def mock_get_token_from_cli() -> Generator[mock.MagicMock]:
-    with mock.patch("gh_download.gh.get_github_token_from_gh_cli") as mock_get_token:
+    with mock.patch("gh_download.gh._github_token_from_gh_cli") as mock_get_token:
         yield mock_get_token
 
 
 def test_get_github_token_gh_not_installed(mock_subprocess_run: mock.MagicMock):
     mock_subprocess_run.side_effect = FileNotFoundError
-    assert get_github_token_from_gh_cli() is None
+    assert _github_token_from_gh_cli() is None
 
 
 def test_get_github_token_gh_auth_status_fail(mock_subprocess_run: mock.MagicMock):
@@ -251,7 +251,7 @@ def test_get_github_token_gh_auth_status_fail(mock_subprocess_run: mock.MagicMoc
             returncode=1,
         ),  # gh auth status
     ]
-    assert get_github_token_from_gh_cli() is None
+    assert _github_token_from_gh_cli() is None
 
 
 def test_get_github_token_gh_auth_status_success_then_token_success(
@@ -265,7 +265,7 @@ def test_get_github_token_gh_auth_status_success_then_token_success(
         ),  # gh auth status
         mock.Mock(stdout="MOCK_TOKEN_VALUE\n", returncode=0),  # gh auth token
     ]
-    assert get_github_token_from_gh_cli() == "MOCK_TOKEN_VALUE"
+    assert _github_token_from_gh_cli() == "MOCK_TOKEN_VALUE"
 
 
 def test_get_github_token_gh_auth_status_fail_then_login_attempt_and_token_success(
@@ -282,18 +282,18 @@ def test_get_github_token_gh_auth_status_fail_then_login_attempt_and_token_succe
             returncode=0,
             stdout="",
             stderr="",
-        ),  # gh auth login (in run_gh_auth_login)
+        ),  # gh auth login (in _run_gh_auth_login)
         mock.Mock(
             stdout="Logged in to github.com account user",
             returncode=0,
-        ),  # gh auth status (in run_gh_auth_login)
+        ),  # gh auth status (in _run_gh_auth_login)
         mock.Mock(
             stdout="Logged in to github.com account user",
             returncode=0,
         ),  # gh auth status (2nd check)
         mock.Mock(stdout="MOCK_TOKEN_VALUE\n", returncode=0),  # gh auth token
     ]
-    assert get_github_token_from_gh_cli() == "MOCK_TOKEN_VALUE"
+    assert _github_token_from_gh_cli() == "MOCK_TOKEN_VALUE"
 
 
 def test_retrieve_gh_auth_token_called_process_error(
@@ -313,7 +313,7 @@ def test_get_github_token_from_gh_cli_exception_handling(
     monkeypatch.setattr("gh_download.gh._check_gh_cli_availability", lambda: "gh")
     monkeypatch.setattr("gh_download.gh._handle_gh_authentication_status", lambda _: True)
     monkeypatch.setattr("gh_download.gh._retrieve_gh_auth_token", lambda _: None)
-    assert get_github_token_from_gh_cli() is None
+    assert _github_token_from_gh_cli() is None
 
 
 def test_get_github_token_from_gh_cli_called_process_error_handling(
@@ -327,7 +327,7 @@ def test_get_github_token_from_gh_cli_called_process_error_handling(
             side_effect=subprocess.CalledProcessError(1, "cmd", stderr="Token error"),
         ),
     )
-    assert get_github_token_from_gh_cli() is None
+    assert _github_token_from_gh_cli() is None
 
 
 def test_get_github_token_from_gh_cli_general_exception_handling(
@@ -342,7 +342,7 @@ def test_get_github_token_from_gh_cli_general_exception_handling(
         "gh_download.gh._handle_gh_authentication_status",
         lambda _: raise_exception(),
     )
-    assert get_github_token_from_gh_cli() is None
+    assert _github_token_from_gh_cli() is None
 
 
 def test_perform_download_and_save_success(
@@ -407,11 +407,7 @@ def test_perform_download_and_save_http_error(
                 mock.Mock(
                     status_code=500,
                     json=mock.Mock(
-                        side_effect=requests.exceptions.JSONDecodeError(
-                            "err",
-                            "doc",
-                            0,
-                        ),
+                        side_effect=requests.exceptions.JSONDecodeError("err", "doc", 0),
                     ),
                     text="Raw text",
                 ),
@@ -425,10 +421,7 @@ def test_perform_download_and_save_http_error(
                 "response",
                 mock.Mock(
                     status_code=401,
-                    json=lambda: {
-                        "message": "Unauthorized",
-                        "documentation_url": "url",
-                    },
+                    json=lambda: {"message": "Unauthorized", "documentation_url": "url"},
                 ),
             ),
             "Authentication/Authorization failed",
@@ -488,13 +481,7 @@ def test_download_file_no_token(
     mock_get_token_from_cli.return_value = None
     output_file = tmp_path / "file.txt"
     output_file.parent.mkdir(parents=True, exist_ok=True)
-    assert not download(
-        "owner",
-        "repo",
-        "file.txt",
-        "main",
-        output_file,
-    )
+    assert not download("owner", "repo", "file.txt", "main", output_file)
     mock_get_token_from_cli.assert_called_once()
 
 
@@ -683,10 +670,10 @@ def test_download_file_directory_success(
 def test_setup_download_headers_success(
     mock_get_token_from_cli: mock.MagicMock,
 ):
-    """Test that _setup_download_headers returns correct headers when token is available."""
+    """Test that setup_download_headers returns correct headers when token is available."""
     mock_get_token_from_cli.return_value = "test_token"
 
-    headers = _setup_download_headers()
+    headers = setup_download_headers()
 
     assert headers is not None
     assert headers["Authorization"] == "token test_token"
@@ -696,10 +683,10 @@ def test_setup_download_headers_success(
 def test_setup_download_headers_no_token(
     mock_get_token_from_cli: mock.MagicMock,
 ):
-    """Test that _setup_download_headers returns None when no token is available."""
+    """Test that setup_download_headers returns None when no token is available."""
     mock_get_token_from_cli.return_value = None
 
-    headers = _setup_download_headers()
+    headers = setup_download_headers()
 
     assert headers is None
 
@@ -831,7 +818,7 @@ def test_run_gh_auth_login_success(mock_subprocess_run: mock.MagicMock):
             returncode=0,
         ),  # gh auth status
     ]
-    assert run_gh_auth_login() is True
+    assert _run_gh_auth_login() is True
 
 
 def test_run_gh_auth_login_fails_login_command(mock_subprocess_run: mock.MagicMock):
@@ -839,7 +826,7 @@ def test_run_gh_auth_login_fails_login_command(mock_subprocess_run: mock.MagicMo
         mock.Mock(returncode=1),  # gh auth login
         mock.Mock(stdout="", stderr="", returncode=1),  # gh auth status
     ]
-    assert run_gh_auth_login() is False
+    assert _run_gh_auth_login() is False
 
 
 def test_run_gh_auth_login_fails_status_check(mock_subprocess_run: mock.MagicMock):
@@ -847,12 +834,12 @@ def test_run_gh_auth_login_fails_status_check(mock_subprocess_run: mock.MagicMoc
         mock.Mock(returncode=0),  # gh auth login
         mock.Mock(stdout="", stderr="", returncode=1),  # gh auth status
     ]
-    assert run_gh_auth_login() is False
+    assert _run_gh_auth_login() is False
 
 
 def test_run_gh_auth_login_gh_not_found(mock_subprocess_run: mock.MagicMock):
     mock_subprocess_run.side_effect = FileNotFoundError
-    assert run_gh_auth_login() is False
+    assert _run_gh_auth_login() is False
 
 
 def test_download_directory_no_double_nesting(
