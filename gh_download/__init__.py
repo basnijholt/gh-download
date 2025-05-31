@@ -358,7 +358,22 @@ def download(
     headers: dict[str, str] | None = None,  # Pre-authenticated headers
     show_progress: bool = True,  # Show progress bar for directory downloads
 ) -> bool:
-    """Core logic for downloading a file or folder."""
+    """Core logic for downloading a file or folder.
+
+    Args:
+        repo_owner: The owner of the repository.
+        repo_name: The name of the repository.
+        file_path: The path to the file or folder within the repository.
+        branch: The branch, tag, or commit SHA to download from.
+        output_path: The path to save the downloaded file or folder.
+        quiet: Suppress verbose output when True.
+        headers: Pre-authenticated headers.
+        show_progress: Show progress bar for directory downloads.
+
+    Returns:
+        True if the download was successful, False otherwise.
+
+    """
     if not quiet:
         console.print(
             Rule(
