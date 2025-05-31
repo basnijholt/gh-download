@@ -12,6 +12,16 @@ from rich.text import Text
 from .rich import console, create_error_panel
 
 
+def setup_download_headers() -> dict[str, str] | None:
+    """Set up authentication headers for GitHub API calls."""
+    token = _github_token_from_gh_cli()
+    if not token:
+        console.print("❌ Could not obtain GitHub token. Download aborted.", style="bold red")
+        return None
+
+    return {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
+
+
 def _create_gh_not_found_message() -> Text:
     """Create the standard GitHub CLI not found message."""
     return Text.assemble(
@@ -228,13 +238,3 @@ def _github_token_from_gh_cli() -> str | None:
             style="bold red",
         )
         return None
-
-
-def setup_download_headers() -> dict[str, str] | None:
-    """Set up authentication headers for GitHub API calls."""
-    token = _github_token_from_gh_cli()
-    if not token:
-        console.print("❌ Could not obtain GitHub token. Download aborted.", style="bold red")
-        return None
-
-    return {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
