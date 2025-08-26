@@ -40,6 +40,13 @@ def no_console_output(monkeypatch: pytest.MonkeyPatch):
     )
 
 
+# Clear GitHub token environment variables to test gh CLI flow
+@pytest.fixture(autouse=True)
+def clear_github_tokens(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+
+
 @pytest.fixture
 def mock_subprocess_run() -> Generator[mock.MagicMock]:
     with mock.patch("subprocess.run") as mock_run:
