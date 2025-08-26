@@ -38,6 +38,9 @@ def no_console_output(monkeypatch: pytest.MonkeyPatch):
         "rich.prompt.Confirm.ask",
         lambda *_, **__: True,
     )
+    # Clear GitHub token environment variables to test gh CLI flow
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
 
 
 @pytest.fixture
