@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 
@@ -217,13 +216,7 @@ def _retrieve_gh_auth_token(gh_executable: str) -> str | None:
 
 
 def _github_token_from_gh_cli() -> str | None:
-    """Attempt to get an OAuth token using the 'gh' CLI or environment."""
-    # Check environment first (for GitHub Actions)
-    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-    if token:
-        console.print("🔑 Using GitHub token from environment.", style="green")
-        return token
-
+    """Attempt to get an OAuth token using the 'gh' CLI."""
     gh_executable = _check_gh_cli_availability()
     if not gh_executable:
         return None
