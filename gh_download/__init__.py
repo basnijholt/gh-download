@@ -168,6 +168,69 @@ def _fetch_content_metadata(
         return None
 
 
+def _is_lfs_download_url(download_url: str) -> bool:
+    """Check if a download URL is for a Git LFS file.
+
+    GitHub LFS (Large File Storage) files are served from different URLs than regular files.
+    When using GitHub App authentication, these URLs already contain authentication tokens
+    and sending an additional Authorization header causes a "Bad credentials" error.
+
+    This is a known issue with GitHub Apps and LFS:
+    https://github.com/actions/checkout/issues/415
+
+    Args:
+        download_url: The download URL from GitHub's content API
+
+    Returns:
+        True if this is an LFS download URL, False otherwise
+
+    """
+    # LFS files are served from media.githubusercontent.com
+    # or contain /storage/lfs/ in the path (for GitHub Enterprise)
+    return "media.githubusercontent.com" in download_url or "/storage/lfs/" in download_url
+
+
+def _prepare_download_headers(
+    download_url: str,
+    headers: dict[str, str],
+    *,
+    quiet: bool = False,
+) -> dict[str, str]:
+    """Prepare headers for downloading a file from GitHub.
+
+    For regular files, we include the Authorization header from the GitHub API.
+    For LFS files, we must NOT include the Authorization header because:
+    1. The LFS download URL already contains a RemoteAuth token
+    2. GitHub Apps send duplicate Authorization headers which causes authentication errors
+
+    This implements the same workaround as the GitHub Actions checkout action.
+
+    Args:
+        download_url: The download URL from GitHub's content API
+        headers: The headers used for API requests (includes Authorization)
+        quiet: Whether to suppress output messages
+
+    Returns:
+        Headers appropriate for downloading the file
+
+    """
+    if _is_lfs_download_url(download_url):
+        # For LFS files, don't include Authorization header to avoid duplicate auth
+        # The LFS server provides its own RemoteAuth token embedded in the URL
+        if not quiet:
+            console.print(
+                "🔐 Downloading LFS file without GitHub token (LFS auth handled separately)",
+            )
+        return {
+            "Accept": "application/octet-stream",
+        }
+    # For regular files, include the Authorization header
+    return {
+        "Authorization": headers["Authorization"],
+        "Accept": "application/octet-stream",
+    }
+
+
 def _download_single_file(
     content_info: dict,
     normalized_path: str,
@@ -202,27 +265,8 @@ def _download_single_file(
         )
         return False
 
-    # Check if this is an LFS download URL
-    # LFS URLs use media.githubusercontent.com or contain /storage/lfs/
-    is_lfs_url = "media.githubusercontent.com" in download_url or "/storage/lfs/" in download_url
-
-    # Update headers for raw file download
-    if is_lfs_url:
-        # For LFS files, don't include Authorization header to avoid duplicate auth
-        # The LFS server provides its own RemoteAuth token in the download URL
-        raw_download_headers = {
-            "Accept": "application/octet-stream",
-        }
-        if not quiet:
-            console.print(
-                "🔐 Downloading LFS file without GitHub token (LFS auth handled separately)",
-            )
-    else:
-        # For regular files, include the Authorization header
-        raw_download_headers = {
-            "Authorization": headers["Authorization"],
-            "Accept": "application/octet-stream",
-        }
+    # Prepare headers based on whether this is an LFS file
+    raw_download_headers = _prepare_download_headers(download_url, headers, quiet=quiet)
 
     return _download_and_save_file(
         download_url,
