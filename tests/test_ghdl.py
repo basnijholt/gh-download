@@ -14,6 +14,8 @@ from gh_download import (
     _download_and_save_file,
     _fetch_content_metadata,
     _handle_download_errors,
+    _is_lfs_download_url,
+    _prepare_download_headers,
     download,
 )
 from gh_download.cli import app
@@ -1027,3 +1029,123 @@ def test_cli_success_message_correct_path(
     # Verify there's no double nesting (the key test for this bug fix)
     double_nested_path = tmp_path / "map" / "map"
     assert not double_nested_path.exists()
+
+
+def test_is_lfs_download_url():
+    """Test that _is_lfs_download_url correctly identifies LFS URLs."""
+    # Test LFS URLs from media.githubusercontent.com
+    assert _is_lfs_download_url(
+        "https://media.githubusercontent.com/media/owner/repo/main/file.bin",
+    )
+    assert _is_lfs_download_url(
+        "https://media.githubusercontent.com/media/ionq/system_performance_archive/main/file.npy",
+    )
+
+    # Test GitHub Enterprise LFS URLs with /storage/lfs/
+    assert _is_lfs_download_url(
+        "https://github.enterprise.com/storage/lfs/owner/repo/objects/abc123",
+    )
+    assert _is_lfs_download_url(
+        "https://github.com/storage/lfs/owner/repo/objects/def456",
+    )
+
+    # Test regular (non-LFS) URLs
+    assert not _is_lfs_download_url(
+        "https://raw.githubusercontent.com/owner/repo/main/README.md",
+    )
+    assert not _is_lfs_download_url(
+        "https://api.github.com/repos/owner/repo/contents/file.txt",
+    )
+    assert not _is_lfs_download_url(
+        "https://github.com/owner/repo/blob/main/src/code.py",
+    )
+
+
+def test_prepare_download_headers_for_lfs():
+    """Test that _prepare_download_headers removes auth for LFS files."""
+    api_headers = {
+        "Authorization": "token test_token",
+        "Accept": "application/vnd.github.v3+json",
+    }
+
+    # Test LFS URL - should NOT include Authorization header
+    lfs_url = "https://media.githubusercontent.com/media/owner/repo/main/file.bin"
+    lfs_headers = _prepare_download_headers(lfs_url, api_headers, quiet=True)
+
+    assert "Authorization" not in lfs_headers
+    assert lfs_headers["Accept"] == "application/octet-stream"
+    assert len(lfs_headers) == 1  # Only Accept header
+
+    # Test another LFS URL pattern
+    lfs_url2 = "https://github.com/storage/lfs/owner/repo/objects/abc123"
+    lfs_headers2 = _prepare_download_headers(lfs_url2, api_headers, quiet=True)
+
+    assert "Authorization" not in lfs_headers2
+    assert lfs_headers2["Accept"] == "application/octet-stream"
+
+
+def test_prepare_download_headers_for_regular_files():
+    """Test that _prepare_download_headers includes auth for regular files."""
+    api_headers = {
+        "Authorization": "token test_token",
+        "Accept": "application/vnd.github.v3+json",
+    }
+
+    # Test regular file URL - should include Authorization header
+    regular_url = "https://raw.githubusercontent.com/owner/repo/main/README.md"
+    regular_headers = _prepare_download_headers(regular_url, api_headers, quiet=True)
+
+    assert regular_headers["Authorization"] == "token test_token"
+    assert regular_headers["Accept"] == "application/octet-stream"
+    assert len(regular_headers) == 2  # Both Authorization and Accept headers
+
+    # Test another regular URL
+    regular_url2 = "https://raw.githubusercontent.com/owner/repo/main/src/code.py"
+    regular_headers2 = _prepare_download_headers(regular_url2, api_headers, quiet=True)
+
+    assert regular_headers2["Authorization"] == "token test_token"
+    assert regular_headers2["Accept"] == "application/octet-stream"
+
+
+def test_download_file_with_lfs_url(
+    mock_get_token_from_cli: mock.MagicMock,
+    mock_requests_get: mock.MagicMock,
+    tmp_path: Path,
+):
+    """Test that download handles LFS files correctly by removing auth header."""
+    mock_get_token_from_cli.return_value = "MOCK_TOKEN"
+
+    # First call to get metadata
+    metadata_response = mock.Mock()
+    metadata_response.raise_for_status = mock.Mock()
+    metadata_response.json.return_value = {
+        "type": "file",
+        "name": "large_file.bin",
+        # LFS download URL from media.githubusercontent.com
+        "download_url": "https://media.githubusercontent.com/media/owner/repo/main/large_file.bin",
+    }
+
+    # Second call to download the actual LFS file
+    download_response = mock.Mock()
+    download_response.raise_for_status = mock.Mock()
+    download_response.iter_content.return_value = [b"LFS file content"]
+
+    mock_requests_get.side_effect = [metadata_response, download_response]
+
+    output_file = tmp_path / "downloaded_lfs.bin"
+    assert download("owner", "repo", "large_file.bin", "main", output_file)
+
+    # Verify the calls
+    assert mock_requests_get.call_count == 2
+
+    # First call gets metadata with auth
+    metadata_call = mock_requests_get.call_args_list[0]
+    assert "Authorization" in metadata_call[1]["headers"]
+
+    # Second call downloads LFS file WITHOUT auth header
+    download_call = mock_requests_get.call_args_list[1]
+    assert "Authorization" not in download_call[1]["headers"]
+    assert download_call[1]["headers"]["Accept"] == "application/octet-stream"
+
+    # Verify file was downloaded
+    assert output_file.read_bytes() == b"LFS file content"
