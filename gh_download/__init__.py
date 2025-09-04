@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from importlib.metadata import version
 from pathlib import Path
 
@@ -30,36 +31,61 @@ def _download_and_save_file(
     *,
     quiet: bool = False,
 ) -> bool:
-    """Download a file from download_url and save it to output_path."""
+    """Download a file from download_url and save it to output_path with simple retry."""
     if not quiet:
         console.print(
             f"⏳ Downloading [cyan]{display_name}[/cyan] to [green]{output_path}[/green]...",
         )
 
-    try:
-        # Ensure parent directory exists
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+    # Simple retry logic for network errors
+    for attempt in range(3):  # Try up to 3 times
+        try:
+            # Ensure parent directory exists
+            output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with requests.Session() as session:
-            # Use stream=True for potentially large files
-            response = session.get(download_url, headers=headers, timeout=60, stream=True)
-            response.raise_for_status()
+            with requests.Session() as session:
+                # Use stream=True for potentially large files
+                response = session.get(download_url, headers=headers, timeout=60, stream=True)
+                response.raise_for_status()
 
-            with output_path.open("wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
+                with output_path.open("wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
 
-            if not quiet:
-                console.print(
-                    f"✅ Saved [cyan]{display_name}[/cyan] to [green]{output_path}[/green]",
-                )
-            return True
-    except requests.exceptions.RequestException as e:
-        _handle_download_errors(e, display_name, output_path)
-        return False
-    except OSError as e:  # For file I/O errors
-        _handle_download_errors(e, display_name, output_path)
-        return False
+                if not quiet:
+                    console.print(
+                        f"✅ Saved [cyan]{display_name}[/cyan] to [green]{output_path}[/green]",
+                    )
+                return True
+
+        except (  # noqa: PERF203
+            requests.exceptions.ChunkedEncodingError,
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+        ) as e:
+            # Network errors that might be transient - retry
+            if attempt < 2:  # Don't retry on the last attempt  # noqa: PLR2004
+                if not quiet:
+                    console.print(
+                        f"⚠️ Network error downloading [cyan]{display_name}[/cyan] "
+                        f"(attempt {attempt + 1}/3). Retrying...",
+                        style="yellow",
+                    )
+                time.sleep(2**attempt)  # Wait 1s, then 2s
+                continue
+            # Last attempt failed
+            _handle_download_errors(e, display_name, output_path)
+            return False
+
+        except requests.exceptions.RequestException as e:
+            # Other HTTP errors - don't retry
+            _handle_download_errors(e, display_name, output_path)
+            return False
+        except OSError as e:  # For file I/O errors - don't retry
+            _handle_download_errors(e, display_name, output_path)
+            return False
+
+    return False  # Should not reach here
 
 
 def _handle_download_errors(
