@@ -95,18 +95,14 @@ gh-download REPO_OWNER REPO_NAME FILE_PATH [OPTIONS]
 
  Download a specific file from a GitHub repository.
 
-
 ╭─ Arguments ──────────────────────────────────────────────────────────────────╮
 │ *    repo_owner      TEXT  The owner of the repository (e.g., 'octocat').    │
-│                            [default: None]                                   │
 │                            [required]                                        │
 │ *    repo_name       TEXT  The name of the repository (e.g., 'Spoon-Knife'). │
-│                            [default: None]                                   │
 │                            [required]                                        │
 │ *    file_path       TEXT  The path to the file or folder within the         │
 │                            repository (e.g., 'README.md' or                  │
 │                            'src/my_folder').                                 │
-│                            [default: None]                                   │
 │                            [required]                                        │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────╮
