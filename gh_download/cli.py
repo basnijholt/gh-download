@@ -53,6 +53,22 @@ def get(
         ),
         show_default=False,
     ),
+    max_retries: int = typer.Option(
+        3,
+        "--max-retries",
+        "-r",
+        help="Maximum number of retry attempts for failed downloads.",
+        min=0,
+        max=10,
+    ),
+    retry_delay: float = typer.Option(
+        1.0,
+        "--retry-delay",
+        "-d",
+        help="Initial delay between retries in seconds (uses exponential backoff).",
+        min=0.1,
+        max=60.0,
+    ),
 ) -> None:
     """Downloads a file or folder from a GitHub repository.
 
@@ -88,6 +104,8 @@ def get(
         file_path=file_path,
         branch=branch,
         output_path=output_path,
+        max_retries=max_retries,
+        retry_delay=retry_delay,
     )
 
     if success:
