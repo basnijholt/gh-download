@@ -106,15 +106,30 @@ gh-download REPO_OWNER REPO_NAME FILE_PATH [OPTIONS]
 │                            [required]                                        │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────╮
-│ --branch  -b      TEXT  The branch, tag, or commit SHA to download from.     │
-│                         [default: main]                                      │
-│ --output  -o      TEXT  Local path to save the downloaded file or folder. If │
-│                         downloading a file, this can be a new filename or a  │
-│                         directory. If downloading a folder, this is the      │
-│                         directory where the folder will be placed. Defaults  │
-│                         to the original filename/foldername in the current   │
-│                         directory.                                           │
-│ --help    -h            Show this message and exit.                          │
+│ --branch       -b      TEXT                       The branch, tag, or commit │
+│                                                   SHA to download from.      │
+│                                                   [default: main]            │
+│ --output       -o      TEXT                       Local path to save the     │
+│                                                   downloaded file or folder. │
+│                                                   If downloading a file,     │
+│                                                   this can be a new filename │
+│                                                   or a directory. If         │
+│                                                   downloading a folder, this │
+│                                                   is the directory where the │
+│                                                   folder will be placed.     │
+│                                                   Defaults to the original   │
+│                                                   filename/foldername in the │
+│                                                   current directory.         │
+│ --max-retries  -r      INTEGER RANGE [0<=x<=10]   Maximum number of retry    │
+│                                                   attempts for failed        │
+│                                                   downloads.                 │
+│                                                   [default: 3]               │
+│ --retry-delay  -d      FLOAT RANGE                Initial delay between      │
+│                        [0.1<=x<=60.0]             retries in seconds (uses   │
+│                                                   exponential backoff).      │
+│                                                   [default: 1.0]             │
+│ --help         -h                                 Show this message and      │
+│                                                   exit.                      │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 
 ```

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from importlib.metadata import version
 from pathlib import Path
 
@@ -16,10 +17,98 @@ from .rich import console, create_error_panel
 
 __version__ = version("gh_download")
 
+# Retry configuration
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_RETRY_DELAY = 1.0  # seconds
+RETRY_BACKOFF_FACTOR = 2.0  # exponential backoff multiplier
+
 
 def _strip_slashes(path_str: str) -> str:
     """Remove leading and trailing slashes from a path string."""
     return path_str.strip("/")
+
+
+def _should_retry_error(
+    error: Exception,
+    attempt: int,
+    max_retries: int,
+) -> bool:
+    """Determine if an error should trigger a retry.
+
+    Args:
+        error: The exception that occurred.
+        attempt: Current attempt number (0-based).
+        max_retries: Maximum number of retry attempts.
+
+    Returns:
+        True if the error should trigger a retry, False otherwise.
+
+    """
+    if attempt >= max_retries:
+        return False
+
+    # Connection and chunked encoding errors are always retryable
+    if isinstance(
+        error,
+        requests.exceptions.ChunkedEncodingError | requests.exceptions.ConnectionError,
+    ):
+        return True
+
+    # Timeout errors are retryable
+    if isinstance(error, requests.exceptions.Timeout):
+        return True
+
+    # Only specific HTTP errors are retryable (server errors)
+    if isinstance(error, requests.exceptions.HTTPError):
+        return error.response.status_code in (502, 503, 504)
+
+    return False
+
+
+def _download_with_temp_file(
+    download_url: str,
+    headers: dict[str, str],
+    output_path: Path,
+    display_name: str,
+    *,
+    quiet: bool = False,
+) -> None:
+    """Download to a temporary file and move to final location.
+
+    Args:
+        download_url: URL to download the file from.
+        headers: HTTP headers to include in the request.
+        output_path: Path where the file should be saved.
+        display_name: Name to display in console messages.
+        quiet: If True, suppress console output.
+
+    Raises:
+        Various request and IO exceptions if download fails.
+
+    """
+    with requests.Session() as session:
+        response = session.get(download_url, headers=headers, timeout=60, stream=True)
+        response.raise_for_status()
+
+        # Write to a temporary file first to avoid partial downloads
+        temp_path = output_path.with_suffix(output_path.suffix + ".tmp")
+        try:
+            with temp_path.open("wb") as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:  # filter out keep-alive chunks
+                        f.write(chunk)
+
+            # Move temp file to final location only after successful download
+            temp_path.replace(output_path)
+
+            if not quiet:
+                console.print(
+                    f"✅ Saved [cyan]{display_name}[/cyan] to [green]{output_path}[/green]",
+                )
+        finally:
+            # Clean up temp file if it still exists
+            if temp_path.exists():
+                temp_path.unlink()
 
 
 def _download_and_save_file(
@@ -29,37 +118,79 @@ def _download_and_save_file(
     display_name: str,
     *,
     quiet: bool = False,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+    retry_delay: float = DEFAULT_RETRY_DELAY,
 ) -> bool:
-    """Download a file from download_url and save it to output_path."""
+    """Download a file from download_url and save it to output_path with retry logic.
+
+    Args:
+        download_url: URL to download the file from.
+        headers: HTTP headers to include in the request.
+        output_path: Path where the file should be saved.
+        display_name: Name to display in console messages.
+        quiet: If True, suppress console output.
+        max_retries: Maximum number of retry attempts.
+        retry_delay: Initial delay between retries in seconds.
+
+    Returns:
+        True if download succeeded, False otherwise.
+
+    """
     if not quiet:
         console.print(
             f"⏳ Downloading [cyan]{display_name}[/cyan] to [green]{output_path}[/green]...",
         )
 
+    # Ensure parent directory exists
     try:
-        # Ensure parent directory exists
         output_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        _handle_download_errors(e, display_name, output_path)
+        return False
 
-        with requests.Session() as session:
-            # Use stream=True for potentially large files
-            response = session.get(download_url, headers=headers, timeout=60, stream=True)
-            response.raise_for_status()
+    current_delay = retry_delay
+    last_error = None
 
-            with output_path.open("wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-
-            if not quiet:
-                console.print(
-                    f"✅ Saved [cyan]{display_name}[/cyan] to [green]{output_path}[/green]",
-                )
+    for attempt in range(max_retries + 1):
+        try:
+            _download_with_temp_file(download_url, headers, output_path, display_name, quiet=quiet)
             return True
-    except requests.exceptions.RequestException as e:
-        _handle_download_errors(e, display_name, output_path)
-        return False
-    except OSError as e:  # For file I/O errors
-        _handle_download_errors(e, display_name, output_path)
-        return False
+
+        except Exception as e:  # noqa: BLE001, PERF203
+            last_error = e
+
+            if _should_retry_error(e, attempt, max_retries):
+                if not quiet:
+                    error_msg = "Download interrupted"
+                    if isinstance(e, requests.exceptions.HTTPError):
+                        error_msg = f"Server error {e.response.status_code}"
+                    elif isinstance(e, requests.exceptions.Timeout):
+                        error_msg = "Request timeout"
+
+                    console.print(
+                        f"⚠️ {error_msg} for [cyan]{display_name}[/cyan] "
+                        f"(attempt {attempt + 1}/{max_retries + 1}). "
+                        f"Retrying in {current_delay:.1f}s...",
+                        style="yellow",
+                    )
+                time.sleep(current_delay)
+                current_delay *= RETRY_BACKOFF_FACTOR
+                continue
+
+            # Not retryable or max retries exceeded
+            if not quiet and attempt == max_retries and _should_retry_error(e, 0, max_retries):
+                console.print(
+                    f"❌ Failed to download [cyan]{display_name}[/cyan] after {max_retries + 1} attempts",
+                    style="red",
+                )
+
+            _handle_download_errors(e, display_name, output_path)
+            return False
+
+    # Should not reach here, but handle if we do
+    if last_error:
+        _handle_download_errors(last_error, display_name, output_path)
+    return False
 
 
 def _handle_download_errors(
@@ -238,6 +369,8 @@ def _download_single_file(
     headers: dict[str, str],
     *,
     quiet: bool = False,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+    retry_delay: float = DEFAULT_RETRY_DELAY,
 ) -> bool:
     """Download a single file based on content metadata."""
     file_name = content_info.get("name", Path(normalized_path).name)
@@ -274,6 +407,8 @@ def _download_single_file(
         final_file_output_path,
         file_name,
         quiet=quiet,
+        max_retries=max_retries,
+        retry_delay=retry_delay,
     )
 
 
@@ -285,6 +420,8 @@ def _process_directory_item(
     target_dir_base: Path,
     display_name: str,
     headers: dict[str, str],
+    max_retries: int = DEFAULT_MAX_RETRIES,
+    retry_delay: float = DEFAULT_RETRY_DELAY,
 ) -> bool:
     """Process a single item in a directory download.
 
@@ -296,6 +433,8 @@ def _process_directory_item(
         target_dir_base: The base directory where items should be downloaded.
         display_name: The display name of the parent directory.
         headers: Pre-authenticated headers for API calls.
+        max_retries: Maximum number of retry attempts for failed downloads.
+        retry_delay: Initial delay between retries in seconds.
 
     Returns:
         True if the item was successfully processed, False otherwise.
@@ -319,6 +458,8 @@ def _process_directory_item(
         quiet=True,  # Suppress verbose output for cleaner progress display
         headers=headers,  # Pass shared headers to avoid re-authentication
         show_progress=False,  # Disable progress for nested directories
+        max_retries=max_retries,
+        retry_delay=retry_delay,
     )
 
     if not success:
@@ -341,6 +482,8 @@ def _download_directory(
     *,
     headers: dict[str, str] | None = None,
     show_progress: bool = True,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+    retry_delay: float = DEFAULT_RETRY_DELAY,
 ) -> bool:
     """Download a directory and all its contents recursively."""
     # Create the base directory for the folder's contents
@@ -406,6 +549,8 @@ def _download_directory(
                     target_dir_base=target_dir_base,
                     display_name=display_name,
                     headers=headers,
+                    max_retries=max_retries,
+                    retry_delay=retry_delay,
                 )
 
                 if not success:
@@ -433,6 +578,8 @@ def _download_directory(
                 target_dir_base=target_dir_base,
                 display_name=display_name,
                 headers=headers,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
             )
 
             if not success:
@@ -451,6 +598,8 @@ def download(
     quiet: bool = False,  # Suppress verbose output when True
     headers: dict[str, str] | None = None,  # Pre-authenticated headers
     show_progress: bool = True,  # Show progress bar for directory downloads
+    max_retries: int = DEFAULT_MAX_RETRIES,  # Maximum retry attempts
+    retry_delay: float = DEFAULT_RETRY_DELAY,  # Initial retry delay
 ) -> bool:
     """Core logic for downloading a file or folder.
 
@@ -463,6 +612,8 @@ def download(
         quiet: Suppress verbose output when True.
         headers: Pre-authenticated headers.
         show_progress: Show progress bar for directory downloads.
+        max_retries: Maximum number of retry attempts for failed downloads.
+        retry_delay: Initial delay between retries in seconds.
 
     Returns:
         True if the download was successful, False otherwise.
@@ -526,6 +677,8 @@ def download(
             output_path,
             common_headers,
             quiet=quiet,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
         )
 
     if isinstance(content_info, list):  # It's a directory
@@ -539,6 +692,8 @@ def download(
             display_name,
             headers=common_headers,  # Pass headers to avoid re-authentication
             show_progress=show_progress,  # Pass progress setting
+            max_retries=max_retries,
+            retry_delay=retry_delay,
         )
 
     console.print(f"❌ Unexpected content type received from API for {display_name}.", style="red")
