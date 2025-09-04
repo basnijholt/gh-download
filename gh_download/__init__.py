@@ -217,6 +217,59 @@ def _download_single_file(
     )
 
 
+def _process_directory_item(
+    item: dict,
+    repo_owner: str,
+    repo_name: str,
+    branch: str,
+    target_dir_base: Path,
+    display_name: str,
+    headers: dict[str, str],
+) -> bool:
+    """Process a single item in a directory download.
+
+    Args:
+        item: Dictionary containing item metadata from GitHub API.
+        repo_owner: The owner of the repository.
+        repo_name: The name of the repository.
+        branch: The branch, tag, or commit SHA to download from.
+        target_dir_base: The base directory where items should be downloaded.
+        display_name: The display name of the parent directory.
+        headers: Pre-authenticated headers for API calls.
+
+    Returns:
+        True if the item was successfully processed, False otherwise.
+
+    """
+    item_name = item.get("name")
+    item_type = item.get("type")
+    item_path_in_repo = item.get("path")  # Full path in repo
+
+    if not item_name or not item_type or not item_path_in_repo:
+        console.print(f"⚠️ Skipping item with missing info: {item}", style="yellow")
+        return False
+
+    # Recursively call download for each item with quiet mode and shared headers
+    success = download(
+        repo_owner=repo_owner,
+        repo_name=repo_name,
+        file_path=item_path_in_repo,  # Use the full path from the API response
+        branch=branch,
+        output_path=target_dir_base,  # Children are downloaded *into* this directory
+        quiet=True,  # Suppress verbose output for cleaner progress display
+        headers=headers,  # Pass shared headers to avoid re-authentication
+        show_progress=False,  # Disable progress for nested directories
+    )
+
+    if not success:
+        console.print(
+            f"❌ Failed to download {item_type} [yellow]{item_name}[/yellow] from {display_name}",
+            style="red",
+        )
+
+    return success
+
+
 def _download_directory(
     content_info: list,
     repo_owner: str,
@@ -276,38 +329,27 @@ def _download_directory(
             for item in content_info:
                 item_name = item.get("name")
                 item_type = item.get("type")
-                item_path_in_repo = item.get("path")  # Full path in repo
-
-                if not item_name or not item_type or not item_path_in_repo:
-                    console.print(f"⚠️ Skipping item with missing info: {item}", style="yellow")
-                    all_success = False
-                    progress.advance(task)
-                    continue
 
                 # Update progress with current item
-                progress.update(
-                    task,
-                    description=f"[cyan]Downloading[/cyan] [blue]{item_type}[/blue]: [yellow]{item_name}[/yellow]",
-                )
+                if item_name and item_type:
+                    progress.update(
+                        task,
+                        description=f"[cyan]Downloading[/cyan] [blue]{item_type}[/blue]: [yellow]{item_name}[/yellow]",
+                    )
 
-                # Recursively call download for each item with quiet mode and shared headers
-                success = download(
+                # Process the item
+                success = _process_directory_item(
+                    item=item,
                     repo_owner=repo_owner,
                     repo_name=repo_name,
-                    file_path=item_path_in_repo,  # Use the full path from the API response
                     branch=branch,
-                    output_path=target_dir_base,  # Children are downloaded *into* this directory
-                    quiet=True,  # Suppress verbose output for cleaner progress display
-                    headers=headers,  # Pass shared headers to avoid re-authentication
-                    show_progress=False,  # Disable progress for nested directories
+                    target_dir_base=target_dir_base,
+                    display_name=display_name,
+                    headers=headers,
                 )
 
                 if not success:
                     all_success = False
-                    console.print(
-                        f"❌ Failed to download {item_type} [yellow]{item_name}[/yellow] from {display_name}",
-                        style="red",
-                    )
 
                 # Advance progress
                 progress.advance(task)
@@ -316,33 +358,25 @@ def _download_directory(
         for item in content_info:
             item_name = item.get("name")
             item_type = item.get("type")
-            item_path_in_repo = item.get("path")  # Full path in repo
 
-            if not item_name or not item_type or not item_path_in_repo:
-                console.print(f"⚠️ Skipping item with missing info: {item}", style="yellow")
-                all_success = False
-                continue
+            if item_name and item_type:
+                console.print(
+                    f"📄 Processing [blue]{item_type}[/blue]: [yellow]{item_name}[/yellow]",
+                )
 
-            console.print(f"📄 Processing [blue]{item_type}[/blue]: [yellow]{item_name}[/yellow]")
-
-            # Recursively call download for each item with quiet mode and shared headers
-            success = download(
+            # Process the item
+            success = _process_directory_item(
+                item=item,
                 repo_owner=repo_owner,
                 repo_name=repo_name,
-                file_path=item_path_in_repo,  # Use the full path from the API response
                 branch=branch,
-                output_path=target_dir_base,  # Children are downloaded *into* this directory
-                quiet=True,  # Suppress verbose output for cleaner progress display
-                headers=headers,  # Pass shared headers to avoid re-authentication
-                show_progress=False,  # Disable progress for nested directories
+                target_dir_base=target_dir_base,
+                display_name=display_name,
+                headers=headers,
             )
 
             if not success:
                 all_success = False
-                console.print(
-                    f"❌ Failed to download {item_type} [yellow]{item_name}[/yellow] from {display_name}",
-                    style="red",
-                )
 
     return all_success
 
