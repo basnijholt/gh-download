@@ -376,6 +376,27 @@ def test_metadata_no_retry_on_403():
         assert mock_session.get.call_count == 1
 
 
+def test_metadata_non_http_request_exception_is_reported():
+    """Test that non-HTTP RequestException errors are surfaced via the error handler."""
+    with mock.patch("requests.Session") as mock_session_class:
+        mock_session = mock_session_class.return_value.__enter__.return_value
+
+        request_error = requests.exceptions.InvalidHeader("Malformed header")
+        mock_session.get.side_effect = request_error
+
+        with mock.patch("gh_download._handle_download_errors") as mock_handle_errors:
+            result = _fetch_content_metadata(
+                "owner", "repo", "path/test.txt", "main",
+                {"Authorization": "token test"}, "test.txt",
+                quiet=True,
+            )
+
+            assert result is None
+            mock_handle_errors.assert_called_once()
+            assert mock_handle_errors.call_args.args[0] is request_error
+            assert mock_handle_errors.call_args.args[1] == "metadata for test.txt"
+
+
 # --- _download_via_blob_api tests ---
 
 

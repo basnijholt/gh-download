@@ -12,6 +12,7 @@ from typer.testing import CliRunner
 
 from gh_download import (
     _download_and_save_file,
+    _download_single_file,
     _fetch_content_metadata,
     _handle_download_errors,
     _is_lfs_download_url,
@@ -1149,3 +1150,71 @@ def test_download_file_with_lfs_url(
 
     # Verify file was downloaded
     assert output_file.read_bytes() == b"LFS file content"
+
+
+def test_download_single_file_skips_blob_fallback_for_lfs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    """Test that failed LFS downloads do not fall back to blob API."""
+    content_info = {
+        "type": "file",
+        "name": "large_file.bin",
+        "sha": "pointer-sha",
+        "download_url": "https://media.githubusercontent.com/media/owner/repo/main/large_file.bin",
+    }
+    headers = {"Authorization": "token test"}
+
+    mock_download = mock.Mock(return_value=False)
+    mock_blob_fallback = mock.Mock(return_value=True)
+
+    monkeypatch.setattr("gh_download._download_and_save_file", mock_download)
+    monkeypatch.setattr("gh_download._download_via_blob_api", mock_blob_fallback)
+
+    result = _download_single_file(
+        content_info=content_info,
+        normalized_path="large_file.bin",
+        output_path=tmp_path / "large_file.bin",
+        headers=headers,
+        repo_owner="owner",
+        repo_name="repo",
+        quiet=True,
+    )
+
+    assert result is False
+    mock_download.assert_called_once()
+    mock_blob_fallback.assert_not_called()
+
+
+def test_download_single_file_uses_blob_fallback_for_regular_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    """Test that failed regular downloads still use blob API fallback."""
+    content_info = {
+        "type": "file",
+        "name": "file.txt",
+        "sha": "blob-sha",
+        "download_url": "https://raw.githubusercontent.com/owner/repo/main/file.txt",
+    }
+    headers = {"Authorization": "token test"}
+
+    mock_download = mock.Mock(return_value=False)
+    mock_blob_fallback = mock.Mock(return_value=True)
+
+    monkeypatch.setattr("gh_download._download_and_save_file", mock_download)
+    monkeypatch.setattr("gh_download._download_via_blob_api", mock_blob_fallback)
+
+    result = _download_single_file(
+        content_info=content_info,
+        normalized_path="file.txt",
+        output_path=tmp_path,
+        headers=headers,
+        repo_owner="owner",
+        repo_name="repo",
+        quiet=True,
+    )
+
+    assert result is True
+    mock_download.assert_called_once()
+    mock_blob_fallback.assert_called_once()

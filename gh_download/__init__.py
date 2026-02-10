@@ -237,7 +237,7 @@ def _fetch_content_metadata(
                 response.raise_for_status()
                 return response.json()
 
-        except (  # noqa: PERF203
+        except (
             requests.exceptions.ChunkedEncodingError,
             requests.exceptions.ConnectionError,
             requests.exceptions.Timeout,
@@ -268,9 +268,9 @@ def _fetch_content_metadata(
                 time.sleep(delay)
                 continue
 
-        except requests.exceptions.RequestException:
-            # Non-retryable request errors
-            pass
+        except requests.exceptions.RequestException as e:
+            # Non-retryable request errors: capture and surface details.
+            last_exception = e
 
         # If we get here without continuing, break out of the retry loop
         break
@@ -341,6 +341,36 @@ def _prepare_download_headers(
         "Authorization": headers["Authorization"],
         "Accept": "application/octet-stream",
     }
+
+
+def _resolve_output_file_path(output_path: Path, file_name: str) -> Path:
+    """Resolve where a downloaded file should be written locally."""
+    looks_like_directory = (
+        output_path.is_dir()
+        or (
+            not output_path.exists()
+            and output_path.name != file_name
+            and not output_path.suffix
+        )
+    )
+    if looks_like_directory:
+        return output_path / file_name
+    return output_path
+
+
+def _should_try_blob_fallback(
+    *,
+    download_succeeded: bool,
+    download_url: str,
+    repo_owner: str,
+    repo_name: str,
+    file_sha: str | None,
+) -> bool:
+    """Return True when blob API fallback is safe and applicable."""
+    if download_succeeded or not repo_owner or not repo_name or not file_sha:
+        return False
+    # For LFS files, Contents API `sha` points to an LFS pointer blob, not the real object.
+    return not _is_lfs_download_url(download_url)
 
 
 def _download_via_blob_api(
@@ -444,20 +474,14 @@ def _download_single_file(
     quiet: bool = False,
 ) -> bool:
     """Download a single file based on content metadata."""
-    file_name = content_info.get("name", Path(normalized_path).name)
+    file_name = str(content_info.get("name") or Path(normalized_path).name)
     download_url = content_info.get("download_url")
 
-    if not download_url:
+    if not isinstance(download_url, str) or not download_url:
         console.print(f"❌ Could not get download_url for file: {file_name}", style="red")
         return False
 
-    # Determine the final output path for the file
-    final_file_output_path = output_path
-    if output_path.is_dir() or (
-        not output_path.exists() and output_path.name != file_name and not output_path.suffix
-    ):
-        # If output_path is an existing dir, or a non-existent path that looks like a dir
-        final_file_output_path = output_path / file_name
+    final_file_output_path = _resolve_output_file_path(output_path, file_name)
 
     # Ensure parent directory for the file exists
     try:
@@ -480,24 +504,37 @@ def _download_single_file(
         quiet=quiet,
     )
 
-    # If download_url failed, try the blob API as fallback
-    if not success and repo_owner and repo_name:
-        file_sha = content_info.get("sha")
-        if file_sha:
-            if not quiet:
-                console.print(
-                    f"🔄 download_url failed for [cyan]{file_name}[/cyan], trying blob API fallback...",
-                    style="yellow",
-                )
-            success = _download_via_blob_api(
-                repo_owner,
-                repo_name,
-                file_sha,
-                headers,
-                final_file_output_path,
-                file_name,
-                quiet=quiet,
+    file_sha = content_info.get("sha")
+    normalized_sha = file_sha if isinstance(file_sha, str) else None
+
+    if normalized_sha and _should_try_blob_fallback(
+        download_succeeded=success,
+        download_url=download_url,
+        repo_owner=repo_owner,
+        repo_name=repo_name,
+        file_sha=normalized_sha,
+    ):
+        if not quiet:
+            console.print(
+                f"🔄 download_url failed for [cyan]{file_name}[/cyan], trying blob API fallback...",
+                style="yellow",
             )
+        return _download_via_blob_api(
+            repo_owner,
+            repo_name,
+            normalized_sha,
+            headers,
+            final_file_output_path,
+            file_name,
+            quiet=quiet,
+        )
+
+    if not success and _is_lfs_download_url(download_url) and not quiet:
+        console.print(
+            f"⚠️ download_url failed for [cyan]{file_name}[/cyan]; "
+            "skipping blob API fallback for LFS content.",
+            style="yellow",
+        )
 
     return success
 
@@ -716,18 +753,12 @@ def download(
         console.print(f"Base output: [green]{output_path}[/green]")
         console.print("-" * 30)
 
-    # Set up authentication headers (only if not provided)
+    # Set up authentication headers once (or reuse provided headers).
     if headers is None:
         headers = setup_download_headers()
         if not headers:
             return False
-    else:
-        # Use provided headers (for directory downloads)
-        common_headers = headers
-
-    # Assign to common_headers for consistent naming
-    if headers is not None:
-        common_headers = headers
+    common_headers = headers
 
     # Fetch metadata to determine if it's a file or directory
     content_info = _fetch_content_metadata(
