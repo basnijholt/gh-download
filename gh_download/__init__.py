@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 from importlib.metadata import version
@@ -17,10 +18,33 @@ from .rich import console, create_error_panel
 
 __version__ = version("gh_download")
 
+# HTTP status codes that are likely transient and worth retrying.
+# 404: GitHub CDN propagation delays can cause intermittent 404s for valid paths.
+# 429: Rate limiting.
+# 500, 502, 503, 504: Server-side issues that are often temporary.
+_RETRYABLE_STATUS_CODES = frozenset({404, 429, 500, 502, 503, 504})
+_MAX_RETRIES = 3
+
+
+def _is_retryable_http_error(exc: requests.exceptions.HTTPError) -> bool:
+    """Check if an HTTP error has a status code worth retrying."""
+    return exc.response is not None and exc.response.status_code in _RETRYABLE_STATUS_CODES
+
 
 def _strip_slashes(path_str: str) -> str:
     """Remove leading and trailing slashes from a path string."""
     return path_str.strip("/")
+
+
+def _retry_delay(attempt: int, status_code: int | None = None) -> float:
+    """Calculate retry delay with exponential backoff.
+
+    For 429 (rate limit), use longer delays.
+    """
+    base = 2**attempt  # 1s, 2s, 4s
+    if status_code == 429:  # noqa: PLR2004
+        base *= 2  # Double the delay for rate limits
+    return base
 
 
 def _download_and_save_file(
@@ -31,14 +55,15 @@ def _download_and_save_file(
     *,
     quiet: bool = False,
 ) -> bool:
-    """Download a file from download_url and save it to output_path with simple retry."""
+    """Download a file from download_url and save it to output_path with retry."""
     if not quiet:
         console.print(
             f"⏳ Downloading [cyan]{display_name}[/cyan] to [green]{output_path}[/green]...",
         )
 
-    # Simple retry logic for network errors
-    for attempt in range(3):  # Try up to 3 times
+    last_exception: Exception | None = None
+
+    for attempt in range(_MAX_RETRIES):
         try:
             # Ensure parent directory exists
             output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -63,29 +88,48 @@ def _download_and_save_file(
             requests.exceptions.ConnectionError,
             requests.exceptions.Timeout,
         ) as e:
-            # Network errors that might be transient - retry
-            if attempt < 2:  # Don't retry on the last attempt  # noqa: PLR2004
+            last_exception = e
+            if attempt < _MAX_RETRIES - 1:
+                delay = _retry_delay(attempt)
                 if not quiet:
                     console.print(
                         f"⚠️ Network error downloading [cyan]{display_name}[/cyan] "
-                        f"(attempt {attempt + 1}/3). Retrying...",
+                        f"(attempt {attempt + 1}/{_MAX_RETRIES}). Retrying in {delay}s...",
                         style="yellow",
                     )
-                time.sleep(2**attempt)  # Wait 1s, then 2s
+                time.sleep(delay)
                 continue
-            # Last attempt failed
+            _handle_download_errors(e, display_name, output_path)
+            return False
+
+        except requests.exceptions.HTTPError as e:
+            last_exception = e
+            if _is_retryable_http_error(e) and attempt < _MAX_RETRIES - 1:
+                status = e.response.status_code
+                delay = _retry_delay(attempt, status)
+                if not quiet:
+                    console.print(
+                        f"⚠️ HTTP {status} downloading [cyan]{display_name}[/cyan] "
+                        f"(attempt {attempt + 1}/{_MAX_RETRIES}). Retrying in {delay}s...",
+                        style="yellow",
+                    )
+                time.sleep(delay)
+                continue
             _handle_download_errors(e, display_name, output_path)
             return False
 
         except requests.exceptions.RequestException as e:
-            # Other HTTP errors - don't retry
+            # Non-retryable request errors (e.g., 401, 403)
             _handle_download_errors(e, display_name, output_path)
             return False
         except OSError as e:  # For file I/O errors - don't retry
             _handle_download_errors(e, display_name, output_path)
             return False
 
-    return False  # Should not reach here
+    # All retries exhausted
+    if last_exception is not None:
+        _handle_download_errors(last_exception, display_name, output_path)
+    return False
 
 
 def _handle_download_errors(
@@ -179,19 +223,61 @@ def _fetch_content_metadata(
     *,
     quiet: bool = False,
 ) -> dict | list | None:
-    """Fetch metadata for the given path from GitHub API."""
+    """Fetch metadata for the given path from GitHub API with retry."""
     metadata_api_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{normalized_path}?ref={branch}"
 
-    try:
-        if not quiet:
-            console.print(f"🔎 Fetching metadata for {display_name}...")
-        with requests.Session() as session:
-            response = session.get(metadata_api_url, headers=headers, timeout=30)
-            response.raise_for_status()
-            return response.json()
-    except requests.exceptions.RequestException as e:
-        _handle_download_errors(e, f"metadata for {display_name}", Path())
-        return None
+    last_exception: Exception | None = None
+
+    for attempt in range(_MAX_RETRIES):
+        try:
+            if not quiet:
+                console.print(f"🔎 Fetching metadata for {display_name}...")
+            with requests.Session() as session:
+                response = session.get(metadata_api_url, headers=headers, timeout=30)
+                response.raise_for_status()
+                return response.json()
+
+        except (  # noqa: PERF203
+            requests.exceptions.ChunkedEncodingError,
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+        ) as e:
+            last_exception = e
+            if attempt < _MAX_RETRIES - 1:
+                delay = _retry_delay(attempt)
+                if not quiet:
+                    console.print(
+                        f"⚠️ Network error fetching metadata for {display_name} "
+                        f"(attempt {attempt + 1}/{_MAX_RETRIES}). Retrying in {delay}s...",
+                        style="yellow",
+                    )
+                time.sleep(delay)
+                continue
+
+        except requests.exceptions.HTTPError as e:
+            last_exception = e
+            if _is_retryable_http_error(e) and attempt < _MAX_RETRIES - 1:
+                status = e.response.status_code
+                delay = _retry_delay(attempt, status)
+                if not quiet:
+                    console.print(
+                        f"⚠️ HTTP {status} fetching metadata for {display_name} "
+                        f"(attempt {attempt + 1}/{_MAX_RETRIES}). Retrying in {delay}s...",
+                        style="yellow",
+                    )
+                time.sleep(delay)
+                continue
+
+        except requests.exceptions.RequestException:
+            # Non-retryable request errors
+            pass
+
+        # If we get here without continuing, break out of the retry loop
+        break
+
+    if last_exception is not None:
+        _handle_download_errors(last_exception, f"metadata for {display_name}", Path())
+    return None
 
 
 def _is_lfs_download_url(download_url: str) -> bool:
@@ -257,12 +343,104 @@ def _prepare_download_headers(
     }
 
 
+def _download_via_blob_api(
+    repo_owner: str,
+    repo_name: str,
+    file_sha: str,
+    headers: dict[str, str],
+    output_path: Path,
+    display_name: str,
+    *,
+    quiet: bool = False,
+) -> bool:
+    """Download a file using the Git Blobs API as a fallback.
+
+    The Blobs API (``/repos/{owner}/{repo}/git/blobs/{sha}``) is more reliable
+    than ``download_url`` from the Contents API because it accesses Git objects
+    directly rather than going through the CDN.
+
+    Args:
+        repo_owner: The owner of the repository.
+        repo_name: The name of the repository.
+        file_sha: The SHA of the file blob.
+        headers: Pre-authenticated headers for API calls.
+        output_path: The path to save the downloaded file.
+        display_name: The display name of the file.
+        quiet: Whether to suppress output messages.
+
+    Returns:
+        True if the download was successful, False otherwise.
+
+    """
+    blob_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/git/blobs/{file_sha}"
+
+    for attempt in range(_MAX_RETRIES):
+        try:
+            if not quiet:
+                console.print(
+                    f"🔄 Trying blob API for [cyan]{display_name}[/cyan]...",
+                )
+            with requests.Session() as session:
+                response = session.get(blob_url, headers=headers, timeout=60)
+                response.raise_for_status()
+
+            blob_data = response.json()
+            content = blob_data.get("content", "")
+            encoding = blob_data.get("encoding", "")
+
+            if encoding != "base64":
+                if not quiet:
+                    console.print(
+                        f"⚠️ Blob API returned unsupported encoding '{encoding}' for {display_name}",
+                        style="yellow",
+                    )
+                return False
+
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_bytes(base64.b64decode(content))
+
+            if not quiet:
+                console.print(
+                    f"✅ Saved [cyan]{display_name}[/cyan] via blob API to [green]{output_path}[/green]",
+                )
+            return True
+
+        except (  # noqa: PERF203
+            requests.exceptions.ChunkedEncodingError,
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+        ) as e:
+            if attempt < _MAX_RETRIES - 1:
+                time.sleep(_retry_delay(attempt))
+                continue
+            _handle_download_errors(e, display_name, output_path)
+            return False
+
+        except requests.exceptions.HTTPError as e:
+            if _is_retryable_http_error(e) and attempt < _MAX_RETRIES - 1:
+                time.sleep(_retry_delay(attempt, e.response.status_code))
+                continue
+            _handle_download_errors(e, display_name, output_path)
+            return False
+
+        except requests.exceptions.RequestException as e:
+            _handle_download_errors(e, display_name, output_path)
+            return False
+        except (OSError, Exception) as e:  # noqa: BLE001
+            _handle_download_errors(e, display_name, output_path)
+            return False
+
+    return False
+
+
 def _download_single_file(
     content_info: dict,
     normalized_path: str,
     output_path: Path,
     headers: dict[str, str],
     *,
+    repo_owner: str = "",
+    repo_name: str = "",
     quiet: bool = False,
 ) -> bool:
     """Download a single file based on content metadata."""
@@ -294,13 +472,34 @@ def _download_single_file(
     # Prepare headers based on whether this is an LFS file
     raw_download_headers = _prepare_download_headers(download_url, headers, quiet=quiet)
 
-    return _download_and_save_file(
+    success = _download_and_save_file(
         download_url,
         raw_download_headers,
         final_file_output_path,
         file_name,
         quiet=quiet,
     )
+
+    # If download_url failed, try the blob API as fallback
+    if not success and repo_owner and repo_name:
+        file_sha = content_info.get("sha")
+        if file_sha:
+            if not quiet:
+                console.print(
+                    f"🔄 download_url failed for [cyan]{file_name}[/cyan], trying blob API fallback...",
+                    style="yellow",
+                )
+            success = _download_via_blob_api(
+                repo_owner,
+                repo_name,
+                file_sha,
+                headers,
+                final_file_output_path,
+                file_name,
+                quiet=quiet,
+            )
+
+    return success
 
 
 def _process_directory_item(
@@ -551,6 +750,8 @@ def download(
             normalized_path,
             output_path,
             common_headers,
+            repo_owner=repo_owner,
+            repo_name=repo_name,
             quiet=quiet,
         )
 
