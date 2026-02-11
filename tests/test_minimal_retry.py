@@ -1,4 +1,4 @@
-"""Test minimal retry functionality."""
+"""Test retry functionality via urllib3 Retry + HTTPAdapter."""
 
 from __future__ import annotations
 
@@ -6,133 +6,180 @@ from typing import TYPE_CHECKING
 from unittest import mock
 
 import requests
+from requests.adapters import HTTPAdapter
 
-from gh_download import _download_and_save_file
+from gh_download import (
+    BACKOFF_FACTOR,
+    MAX_RETRIES,
+    RETRYABLE_STATUS_CODES,
+    _create_session,
+    _download_and_save_file,
+    _fetch_content_metadata,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from urllib3.util.retry import Retry
 
-def test_retry_on_network_error(tmp_path: Path):
-    """Test that download retries on network errors."""
-    download_url = "https://example.com/file.txt"
-    headers = {"Authorization": "token test"}
+
+def test_create_session_has_retry_adapter():
+    """Test that _create_session mounts an HTTPAdapter with correct retry config."""
+    headers = {"Authorization": "token test", "Accept": "application/vnd.github.v3+json"}
+    session = _create_session(headers)
+
+    adapter = session.get_adapter("https://api.github.com")
+    assert isinstance(adapter, HTTPAdapter)
+
+    retry: Retry = adapter.max_retries
+    assert retry.total == MAX_RETRIES
+    assert retry.backoff_factor == BACKOFF_FACTOR
+    assert retry.status_forcelist == RETRYABLE_STATUS_CODES
+    assert "GET" in retry.allowed_methods
+
+    # Headers are set on the session
+    assert session.headers["Authorization"] == "token test"
+    session.close()
+
+
+def test_create_session_retries_on_configured_status_codes():
+    """Test that RETRYABLE_STATUS_CODES includes expected codes."""
+    assert 404 in RETRYABLE_STATUS_CODES  # CDN propagation delays
+    assert 429 in RETRYABLE_STATUS_CODES  # Rate limiting
+    assert 500 in RETRYABLE_STATUS_CODES  # Server errors
+    assert 502 in RETRYABLE_STATUS_CODES
+    assert 503 in RETRYABLE_STATUS_CODES
+    assert 504 in RETRYABLE_STATUS_CODES
+    # Auth errors should NOT be retried
+    assert 401 not in RETRYABLE_STATUS_CODES
+    assert 403 not in RETRYABLE_STATUS_CODES
+
+
+def test_download_and_save_file_success(tmp_path: Path):
+    """Test successful download."""
     output_path = tmp_path / "test_file.txt"
+    headers = {"Authorization": "token test"}
 
-    with mock.patch("requests.Session") as mock_session_class:
-        mock_session = mock_session_class.return_value.__enter__.return_value
+    mock_response = mock.Mock()
+    mock_response.raise_for_status = mock.Mock()
+    mock_response.iter_content.return_value = [b"test content"]
 
-        # First attempt fails with ConnectionError, second succeeds
-        mock_response_success = mock.Mock()
-        mock_response_success.raise_for_status = mock.Mock()
-        mock_response_success.iter_content.return_value = [b"test content"]
+    with mock.patch("gh_download._create_session") as mock_cs:
+        mock_session = mock.MagicMock()
+        mock_session.get.return_value = mock_response
+        mock_session.__enter__ = mock.Mock(return_value=mock_session)
+        mock_session.__exit__ = mock.Mock(return_value=False)
+        mock_cs.return_value = mock_session
 
-        mock_session.get.side_effect = [
-            requests.exceptions.ConnectionError("Connection broken"),
-            mock_response_success,
-        ]
-
-        # Should succeed after retry
         result = _download_and_save_file(
-            download_url,
+            "https://example.com/file.txt",
             headers,
             output_path,
             "test_file.txt",
             quiet=True,
         )
 
-        assert result is True
-        assert output_path.exists()
-        assert output_path.read_bytes() == b"test content"
-        assert mock_session.get.call_count == 2  # First failed, second succeeded
+    assert result is True
+    assert output_path.read_bytes() == b"test content"
 
 
-def test_retry_on_incomplete_read(tmp_path: Path):
-    """Test that download retries on ChunkedEncodingError (IncompleteRead)."""
-    download_url = "https://example.com/file.txt"
-    headers = {"Authorization": "token test"}
+def test_download_and_save_file_http_error(tmp_path: Path):
+    """Test that non-retryable HTTP errors fail immediately."""
     output_path = tmp_path / "test_file.txt"
+    headers = {"Authorization": "token test"}
 
-    with mock.patch("requests.Session") as mock_session_class:
-        mock_session = mock_session_class.return_value.__enter__.return_value
+    mock_response = mock.Mock()
+    mock_response.status_code = 401
+    mock_response.json.return_value = {"message": "Bad credentials"}
+    mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+        response=mock_response,
+    )
 
-        # First two attempts fail with ChunkedEncodingError, third succeeds
-        mock_response_success = mock.Mock()
-        mock_response_success.raise_for_status = mock.Mock()
-        mock_response_success.iter_content.return_value = [b"test content"]
-
-        mock_session.get.side_effect = [
-            requests.exceptions.ChunkedEncodingError("IncompleteRead"),
-            requests.exceptions.ChunkedEncodingError("IncompleteRead"),
-            mock_response_success,
-        ]
+    with mock.patch("gh_download._create_session") as mock_cs:
+        mock_session = mock.MagicMock()
+        mock_session.get.return_value = mock_response
+        mock_session.__enter__ = mock.Mock(return_value=mock_session)
+        mock_session.__exit__ = mock.Mock(return_value=False)
+        mock_cs.return_value = mock_session
 
         result = _download_and_save_file(
-            download_url,
+            "https://example.com/file.txt",
             headers,
             output_path,
             "test_file.txt",
             quiet=True,
         )
 
-        assert result is True
-        assert output_path.exists()
-        assert output_path.read_bytes() == b"test content"
-        assert mock_session.get.call_count == 3  # All 3 attempts used
+    assert result is False
+    assert not output_path.exists()
 
 
-def test_no_retry_on_404(tmp_path: Path):
-    """Test that download does not retry on 404 errors."""
-    download_url = "https://example.com/file.txt"
-    headers = {"Authorization": "token test"}
+def test_download_and_save_file_os_error(tmp_path: Path):
+    """Test that OS errors (file I/O) fail without retry."""
+    # Use an impossible path to trigger OSError on mkdir
     output_path = tmp_path / "test_file.txt"
+    headers = {"Authorization": "token test"}
 
-    with mock.patch("requests.Session") as mock_session_class:
-        mock_session = mock_session_class.return_value.__enter__.return_value
-
-        # Create mock response for 404 error
-        mock_response_404 = mock.Mock()
-        mock_response_404.status_code = 404
-        mock_response_404.json.return_value = {"message": "Not Found"}
-        mock_response_404.raise_for_status.side_effect = requests.exceptions.HTTPError(
-            response=mock_response_404,
-        )
-
-        mock_session.get.return_value = mock_response_404
+    with mock.patch("gh_download._create_session") as mock_cs:
+        mock_session = mock.MagicMock()
+        mock_session.__enter__ = mock.Mock(return_value=mock_session)
+        mock_session.__exit__ = mock.Mock(return_value=False)
+        mock_session.get.side_effect = OSError("disk full")
+        mock_cs.return_value = mock_session
 
         result = _download_and_save_file(
-            download_url,
+            "https://example.com/file.txt",
             headers,
             output_path,
             "test_file.txt",
             quiet=True,
         )
 
-        assert result is False
-        assert not output_path.exists()
-        assert mock_session.get.call_count == 1  # No retries for 404
+    assert result is False
 
 
-def test_fails_after_3_attempts(tmp_path: Path):
-    """Test that download fails after 3 attempts."""
-    download_url = "https://example.com/file.txt"
-    headers = {"Authorization": "token test"}
-    output_path = tmp_path / "test_file.txt"
+def test_fetch_content_metadata_success():
+    """Test successful metadata fetch."""
+    headers = {"Authorization": "token test", "Accept": "application/vnd.github.v3+json"}
 
-    with mock.patch("requests.Session") as mock_session_class:
-        mock_session = mock_session_class.return_value.__enter__.return_value
+    mock_response = mock.Mock()
+    mock_response.raise_for_status = mock.Mock()
+    mock_response.json.return_value = {"type": "file", "name": "test.txt"}
 
-        # All attempts fail
-        mock_session.get.side_effect = requests.exceptions.ConnectionError("Connection broken")
+    with mock.patch("gh_download._create_session") as mock_cs:
+        mock_session = mock.MagicMock()
+        mock_session.get.return_value = mock_response
+        mock_session.__enter__ = mock.Mock(return_value=mock_session)
+        mock_session.__exit__ = mock.Mock(return_value=False)
+        mock_cs.return_value = mock_session
 
-        result = _download_and_save_file(
-            download_url,
-            headers,
-            output_path,
-            "test_file.txt",
-            quiet=True,
+        result = _fetch_content_metadata(
+            "owner", "repo", "test.txt", "main", headers, "test.txt", quiet=True,
         )
 
-        assert result is False
-        assert not output_path.exists()
-        assert mock_session.get.call_count == 3  # Exactly 3 attempts
+    assert result == {"type": "file", "name": "test.txt"}
+
+
+def test_fetch_content_metadata_http_error():
+    """Test metadata fetch handles HTTP errors."""
+    headers = {"Authorization": "token test", "Accept": "application/vnd.github.v3+json"}
+
+    mock_response = mock.Mock()
+    mock_response.status_code = 403
+    mock_response.json.return_value = {"message": "Forbidden"}
+    mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+        response=mock_response,
+    )
+
+    with mock.patch("gh_download._create_session") as mock_cs:
+        mock_session = mock.MagicMock()
+        mock_session.get.return_value = mock_response
+        mock_session.__enter__ = mock.Mock(return_value=mock_session)
+        mock_session.__exit__ = mock.Mock(return_value=False)
+        mock_cs.return_value = mock_session
+
+        result = _fetch_content_metadata(
+            "owner", "repo", "test.txt", "main", headers, "test.txt", quiet=True,
+        )
+
+    assert result is None

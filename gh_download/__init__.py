@@ -3,19 +3,52 @@
 from __future__ import annotations
 
 import json
-import time
 from importlib.metadata import version
 from pathlib import Path
 
 import requests
+from requests.adapters import HTTPAdapter
 from rich.progress import Progress
 from rich.rule import Rule
 from rich.text import Text
+from urllib3.util.retry import Retry
 
 from .gh import setup_download_headers
 from .rich import console, create_error_panel
 
 __version__ = version("gh_download")
+
+#: HTTP status codes that are transient and worth retrying.
+#: 404: GitHub CDN propagation delays can cause intermittent 404s for valid paths.
+#: 429: Rate limiting.
+#: 500, 502, 503, 504: Server-side issues that are often temporary.
+RETRYABLE_STATUS_CODES = frozenset({404, 429, 500, 502, 503, 504})
+
+#: Default retry configuration.
+MAX_RETRIES = 3
+BACKOFF_FACTOR = 1  # 1s, 2s, 4s between retries
+
+
+def _create_session(headers: dict[str, str]) -> requests.Session:
+    """Create a requests session with retry for transient errors.
+
+    Uses ``urllib3.util.retry.Retry`` mounted via ``HTTPAdapter`` to handle
+    retries for both network errors and transient HTTP status codes (404, 429,
+    5xx) with exponential backoff.
+    """
+    session = requests.Session()
+    session.headers.update(headers)
+    retry = Retry(
+        total=MAX_RETRIES,
+        backoff_factor=BACKOFF_FACTOR,
+        status_forcelist=RETRYABLE_STATUS_CODES,
+        allowed_methods={"GET"},
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
 
 
 def _strip_slashes(path_str: str) -> str:
@@ -31,61 +64,35 @@ def _download_and_save_file(
     *,
     quiet: bool = False,
 ) -> bool:
-    """Download a file from download_url and save it to output_path with simple retry."""
+    """Download a file from download_url and save it to output_path."""
     if not quiet:
         console.print(
             f"⏳ Downloading [cyan]{display_name}[/cyan] to [green]{output_path}[/green]...",
         )
 
-    # Simple retry logic for network errors
-    for attempt in range(3):  # Try up to 3 times
-        try:
-            # Ensure parent directory exists
-            output_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            with requests.Session() as session:
-                # Use stream=True for potentially large files
-                response = session.get(download_url, headers=headers, timeout=60, stream=True)
-                response.raise_for_status()
+        with _create_session(headers) as session:
+            response = session.get(download_url, timeout=60, stream=True)
+            response.raise_for_status()
 
-                with output_path.open("wb") as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
+            with output_path.open("wb") as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
 
-                if not quiet:
-                    console.print(
-                        f"✅ Saved [cyan]{display_name}[/cyan] to [green]{output_path}[/green]",
-                    )
-                return True
+            if not quiet:
+                console.print(
+                    f"✅ Saved [cyan]{display_name}[/cyan] to [green]{output_path}[/green]",
+                )
+            return True
 
-        except (  # noqa: PERF203
-            requests.exceptions.ChunkedEncodingError,
-            requests.exceptions.ConnectionError,
-            requests.exceptions.Timeout,
-        ) as e:
-            # Network errors that might be transient - retry
-            if attempt < 2:  # Don't retry on the last attempt  # noqa: PLR2004
-                if not quiet:
-                    console.print(
-                        f"⚠️ Network error downloading [cyan]{display_name}[/cyan] "
-                        f"(attempt {attempt + 1}/3). Retrying...",
-                        style="yellow",
-                    )
-                time.sleep(2**attempt)  # Wait 1s, then 2s
-                continue
-            # Last attempt failed
-            _handle_download_errors(e, display_name, output_path)
-            return False
-
-        except requests.exceptions.RequestException as e:
-            # Other HTTP errors - don't retry
-            _handle_download_errors(e, display_name, output_path)
-            return False
-        except OSError as e:  # For file I/O errors - don't retry
-            _handle_download_errors(e, display_name, output_path)
-            return False
-
-    return False  # Should not reach here
+    except requests.exceptions.RequestException as e:
+        _handle_download_errors(e, display_name, output_path)
+        return False
+    except OSError as e:
+        _handle_download_errors(e, display_name, output_path)
+        return False
 
 
 def _handle_download_errors(
@@ -185,8 +192,8 @@ def _fetch_content_metadata(
     try:
         if not quiet:
             console.print(f"🔎 Fetching metadata for {display_name}...")
-        with requests.Session() as session:
-            response = session.get(metadata_api_url, headers=headers, timeout=30)
+        with _create_session(headers) as session:
+            response = session.get(metadata_api_url, timeout=30)
             response.raise_for_status()
             return response.json()
     except requests.exceptions.RequestException as e:

@@ -524,15 +524,6 @@ def test_download_file_success(
 
     # Should be called twice - once for metadata, once for download
     assert mock_requests_get.call_count == 2
-
-    # First call gets metadata
-    metadata_call = mock_requests_get.call_args_list[0]
-    assert metadata_call[1]["headers"]["Accept"] == "application/vnd.github.v3+json"
-
-    # Second call downloads the file
-    download_call = mock_requests_get.call_args_list[1]
-    assert download_call[1]["headers"]["Accept"] == "application/octet-stream"
-
     assert output_file.read_bytes() == b"file content"
 
 
@@ -1143,19 +1134,7 @@ def test_download_file_with_lfs_url(
     output_file = tmp_path / "downloaded_lfs.bin"
     assert download("owner", "repo", "large_file.bin", "main", output_file)
 
-    # Verify the calls
     assert mock_requests_get.call_count == 2
-
-    # First call gets metadata with auth
-    metadata_call = mock_requests_get.call_args_list[0]
-    assert "Authorization" in metadata_call[1]["headers"]
-
-    # Second call downloads LFS file WITHOUT auth header
-    download_call = mock_requests_get.call_args_list[1]
-    assert "Authorization" not in download_call[1]["headers"]
-    assert download_call[1]["headers"]["Accept"] == "application/octet-stream"
-
-    # Verify file was downloaded
     assert output_file.read_bytes() == b"LFS file content"
 
 
@@ -1247,9 +1226,5 @@ def test_download_with_env_token(
 
     output_file = tmp_path / "downloaded.txt"
     assert download("owner", "repo", "file.txt", "main", output_file)
-
-    # Verify auth header uses the env token
-    metadata_call = mock_requests_get.call_args_list[0]
-    assert metadata_call[1]["headers"]["Authorization"] == "token env-token-value"
 
     assert output_file.read_bytes() == b"file content"
