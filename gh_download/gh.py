@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 
@@ -11,10 +12,38 @@ from rich.text import Text
 
 from .rich import console, create_error_panel
 
+#: Environment variables checked for GitHub tokens, in priority order.
+#: ``GH_TOKEN`` is the standard env var used by the ``gh`` CLI itself.
+#: ``GITHUB_TOKEN`` is automatically set in GitHub Actions runners.
+TOKEN_ENV_VARS: tuple[str, ...] = ("GH_TOKEN", "GITHUB_TOKEN")
+
+
+def _github_token_from_env() -> str | None:
+    """Get a GitHub token from environment variables.
+
+    Checks ``GH_TOKEN`` and ``GITHUB_TOKEN`` (in that order).
+    This is useful in CI, Docker builds, and other non-interactive
+    environments where the ``gh`` CLI may not be installed or authenticated.
+    """
+    for var in TOKEN_ENV_VARS:
+        token = os.environ.get(var)
+        if token:
+            console.print(
+                f"🔑 Using GitHub token from [cyan]{var}[/cyan] environment variable.",
+                style="green",
+            )
+            return token
+    return None
+
 
 def setup_download_headers() -> dict[str, str] | None:
-    """Set up authentication headers for GitHub API calls."""
-    token = _github_token_from_gh_cli()
+    """Set up authentication headers for GitHub API calls.
+
+    Checks for tokens in the following order:
+    1. ``GH_TOKEN`` / ``GITHUB_TOKEN`` environment variables
+    2. ``gh`` CLI authentication (``gh auth token``)
+    """
+    token = _github_token_from_env() or _github_token_from_gh_cli()
     if not token:
         console.print("❌ Could not obtain GitHub token. Download aborted.", style="bold red")
         return None

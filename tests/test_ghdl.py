@@ -23,6 +23,7 @@ from gh_download.gh import (
     _check_gh_auth_status,
     _check_gh_cli_availability,
     _check_gh_executable,
+    _github_token_from_env,
     _github_token_from_gh_cli,
     _handle_gh_authentication_status,
     _perform_gh_login_and_verify,
@@ -237,6 +238,13 @@ def mock_requests_get() -> Generator[mock.MagicMock]:
 def mock_get_token_from_cli() -> Generator[mock.MagicMock]:
     with mock.patch("gh_download.gh._github_token_from_gh_cli") as mock_get_token:
         yield mock_get_token
+
+
+@pytest.fixture(autouse=True)
+def clear_token_env_vars(monkeypatch: pytest.MonkeyPatch):
+    """Ensure GH_TOKEN and GITHUB_TOKEN are not set during tests."""
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
 
 
 def test_get_github_token_gh_not_installed(mock_subprocess_run: mock.MagicMock):
@@ -1149,3 +1157,99 @@ def test_download_file_with_lfs_url(
 
     # Verify file was downloaded
     assert output_file.read_bytes() == b"LFS file content"
+
+
+# --- Tests for environment variable token support ---
+
+
+def test_github_token_from_env_gh_token(monkeypatch: pytest.MonkeyPatch):
+    """GH_TOKEN env var is used when set."""
+    monkeypatch.setenv("GH_TOKEN", "env-token-gh")
+    assert _github_token_from_env() == "env-token-gh"
+
+
+def test_github_token_from_env_github_token(monkeypatch: pytest.MonkeyPatch):
+    """GITHUB_TOKEN env var is used when GH_TOKEN is not set."""
+    monkeypatch.setenv("GITHUB_TOKEN", "env-token-github")
+    assert _github_token_from_env() == "env-token-github"
+
+
+def test_github_token_from_env_gh_token_takes_priority(monkeypatch: pytest.MonkeyPatch):
+    """GH_TOKEN takes priority over GITHUB_TOKEN."""
+    monkeypatch.setenv("GH_TOKEN", "gh-token-value")
+    monkeypatch.setenv("GITHUB_TOKEN", "github-token-value")
+    assert _github_token_from_env() == "gh-token-value"
+
+
+def test_github_token_from_env_none_when_unset():
+    """Returns None when no token env vars are set."""
+    assert _github_token_from_env() is None
+
+
+def test_setup_download_headers_uses_env_var(monkeypatch: pytest.MonkeyPatch):
+    """setup_download_headers uses env var token without touching gh CLI."""
+    monkeypatch.setenv("GH_TOKEN", "env-token-value")
+
+    headers = setup_download_headers()
+
+    assert headers is not None
+    assert headers["Authorization"] == "token env-token-value"
+    assert headers["Accept"] == "application/vnd.github.v3+json"
+
+
+def test_setup_download_headers_env_var_skips_gh_cli(
+    monkeypatch: pytest.MonkeyPatch,
+    mock_get_token_from_cli: mock.MagicMock,
+):
+    """When env var is set, gh CLI is never called."""
+    monkeypatch.setenv("GH_TOKEN", "env-token-value")
+
+    headers = setup_download_headers()
+
+    assert headers is not None
+    mock_get_token_from_cli.assert_not_called()
+
+
+def test_setup_download_headers_falls_back_to_gh_cli(
+    mock_get_token_from_cli: mock.MagicMock,
+):
+    """When no env vars are set, falls back to gh CLI."""
+    mock_get_token_from_cli.return_value = "cli-token-value"
+
+    headers = setup_download_headers()
+
+    assert headers is not None
+    assert headers["Authorization"] == "token cli-token-value"
+    mock_get_token_from_cli.assert_called_once()
+
+
+def test_download_with_env_token(
+    monkeypatch: pytest.MonkeyPatch,
+    mock_requests_get: mock.MagicMock,
+    tmp_path: Path,
+):
+    """Full download flow works with env var token (no gh CLI needed)."""
+    monkeypatch.setenv("GH_TOKEN", "env-token-value")
+
+    metadata_response = mock.Mock()
+    metadata_response.raise_for_status = mock.Mock()
+    metadata_response.json.return_value = {
+        "type": "file",
+        "name": "file.txt",
+        "download_url": "https://raw.githubusercontent.com/owner/repo/main/file.txt",
+    }
+
+    download_response = mock.Mock()
+    download_response.raise_for_status = mock.Mock()
+    download_response.iter_content.return_value = [b"file content"]
+
+    mock_requests_get.side_effect = [metadata_response, download_response]
+
+    output_file = tmp_path / "downloaded.txt"
+    assert download("owner", "repo", "file.txt", "main", output_file)
+
+    # Verify auth header uses the env token
+    metadata_call = mock_requests_get.call_args_list[0]
+    assert metadata_call[1]["headers"]["Authorization"] == "token env-token-value"
+
+    assert output_file.read_bytes() == b"file content"
