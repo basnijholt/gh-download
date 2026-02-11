@@ -1,6 +1,6 @@
 # GitHub Downloader (gh-download)
 
-`gh-download` is a Python command-line tool that allows you to download files from GitHub repositories, including private ones, by leveraging your existing `gh` (GitHub CLI) authentication.
+`gh-download` is a Python command-line tool that allows you to download files from GitHub repositories, including private ones, using `GH_TOKEN`/`GITHUB_TOKEN` environment variables or your existing `gh` (GitHub CLI) authentication.
 
 > [!TIP]
 > If using [`uv`](https://docs.astral.sh/uv/), just run:
@@ -20,7 +20,8 @@
   - [Examples](#examples)
   - [Arguments](#arguments)
   - [Options](#options)
-  - [How it Works](#how-it-works)
+  - [Authentication](#authentication)
+    - [Examples](#examples-1)
 - [Development](#development)
   - [Running Tests](#running-tests)
   - [Pre-commit Hooks](#pre-commit-hooks)
@@ -34,15 +35,17 @@
 ## Features
 
 - Download files from public and private GitHub repositories.
-- Utilizes your authenticated `gh` CLI session to access private repositories.
-- Automatically prompts for `gh auth login` if you are not authenticated.
+- Supports authentication via `GH_TOKEN`/`GITHUB_TOKEN` environment variables or the `gh` CLI.
+- Automatically prompts for `gh auth login` if no token is available.
 - Provides clear, user-friendly output and error messages using the Rich library.
 - Simple command-line interface.
 
 ## Prerequisites
 
 - **Python**: Version 3.11 or higher.
-- **GitHub CLI (`gh`)**: Must be installed and in your system's PATH. You can install it from [https://cli.github.com/](https://cli.github.com/) or use [dotbins](https://github.com/basnijholt/dotbins) and run `uvx dotbins get cli/cli --name gh` to install it.
+- **Authentication** (one of the following):
+  - **Environment variable**: Set `GH_TOKEN` or `GITHUB_TOKEN` (works in CI, Docker, and non-interactive environments).
+  - **GitHub CLI (`gh`)**: Installed and in your system's PATH. You can install it from [https://cli.github.com/](https://cli.github.com/) or use [dotbins](https://github.com/basnijholt/dotbins) and run `uvx dotbins get cli/cli --name gh` to install it.
 
 ## Installation
 
@@ -151,14 +154,24 @@ gh-download microsoft vscode package.json --branch release/1.85
 - `--output, -o`: Local path to save the downloaded file (defaults to the original filename in the current directory)
 - `--help`: Show help message
 
-### How it Works
+### Authentication
 
-1. **Checks for `gh` CLI**: Verifies that the `gh` command-line tool is installed and accessible.
-2. **Checks Authentication**: Runs `gh auth status` to see if you are logged into GitHub.
-3. **Prompts for Login**: If not authenticated, it will ask if you want to run `gh auth login`. If you agree, it initiates the standard `gh` web-based authentication flow.
-4. **Retrieves Token**: Once authenticated, it uses `gh auth token` to get an OAuth token.
-5. **Downloads File**: Uses the GitHub API with the retrieved token to download the specified file.
-6. **Saves File**: Saves the downloaded content to the specified local output path.
+`gh-download` checks for authentication in this order:
+
+1. **Environment variables**: Checks `GH_TOKEN`, then `GITHUB_TOKEN`. This is the recommended approach for CI/CD pipelines, Docker builds, and other non-interactive environments.
+2. **`gh` CLI**: Falls back to `gh auth token` to get an OAuth token from the GitHub CLI.
+3. **Interactive login**: If neither is available, prompts you to run `gh auth login`.
+
+#### Examples
+
+```bash
+# Using an environment variable (CI/Docker)
+GH_TOKEN=ghp_xxx gh-download owner repo path/to/file
+
+# Using gh CLI authentication (interactive)
+gh auth login  # one-time setup
+gh-download owner repo path/to/file
+```
 
 ## Development
 
