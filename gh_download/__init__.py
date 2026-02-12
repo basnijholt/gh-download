@@ -17,6 +17,12 @@ from .rich import console, create_error_panel
 
 __version__ = version("gh_download")
 
+#: HTTP status codes that are transient and worth retrying.
+#: 404: GitHub CDN propagation delays can cause intermittent 404s for valid paths.
+#: 429: Rate limiting.
+#: 500, 502, 503, 504: Server-side issues that are often temporary.
+_RETRYABLE_STATUS_CODES = frozenset({404, 429, 500, 502, 503, 504})
+
 
 def _strip_slashes(path_str: str) -> str:
     """Remove leading and trailing slashes from a path string."""
@@ -37,14 +43,12 @@ def _download_and_save_file(
             f"⏳ Downloading [cyan]{display_name}[/cyan] to [green]{output_path}[/green]...",
         )
 
-    # Simple retry logic for network errors
     for attempt in range(3):  # Try up to 3 times
         try:
             # Ensure parent directory exists
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
             with requests.Session() as session:
-                # Use stream=True for potentially large files
                 response = session.get(download_url, headers=headers, timeout=60, stream=True)
                 response.raise_for_status()
 
@@ -62,12 +66,21 @@ def _download_and_save_file(
             requests.exceptions.ChunkedEncodingError,
             requests.exceptions.ConnectionError,
             requests.exceptions.Timeout,
+            requests.exceptions.HTTPError,
         ) as e:
-            # Network errors that might be transient - retry
-            if attempt < 2:  # Don't retry on the last attempt  # noqa: PLR2004
+            # Don't retry non-transient HTTP errors (401, 403, etc.)
+            if (
+                isinstance(e, requests.exceptions.HTTPError)
+                and e.response is not None
+                and e.response.status_code not in _RETRYABLE_STATUS_CODES
+            ):
+                _handle_download_errors(e, display_name, output_path)
+                return False
+
+            if attempt < 2:  # noqa: PLR2004
                 if not quiet:
                     console.print(
-                        f"⚠️ Network error downloading [cyan]{display_name}[/cyan] "
+                        f"⚠️ Transient error downloading [cyan]{display_name}[/cyan] "
                         f"(attempt {attempt + 1}/3). Retrying...",
                         style="yellow",
                     )
@@ -78,10 +91,9 @@ def _download_and_save_file(
             return False
 
         except requests.exceptions.RequestException as e:
-            # Other HTTP errors - don't retry
             _handle_download_errors(e, display_name, output_path)
             return False
-        except OSError as e:  # For file I/O errors - don't retry
+        except OSError as e:
             _handle_download_errors(e, display_name, output_path)
             return False
 
