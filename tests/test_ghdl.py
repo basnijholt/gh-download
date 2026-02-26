@@ -536,6 +536,96 @@ def test_download_file_success(
     assert output_file.read_bytes() == b"file content"
 
 
+def test_download_file_fallback_to_contents_api_raw(
+    mock_get_token_from_cli: mock.MagicMock,
+    mock_requests_get: mock.MagicMock,
+    tmp_path: Path,
+):
+    """If the primary file URL fails, fallback to the contents raw endpoint."""
+    mock_get_token_from_cli.return_value = "MOCK_TOKEN"
+
+    metadata_response = mock.Mock()
+    metadata_response.raise_for_status = mock.Mock()
+    metadata_response.json.return_value = {
+        "type": "file",
+        "name": "large_file.bin",
+        "download_url": "https://media.githubusercontent.com/media/owner/repo/main/large_file.bin",
+    }
+
+    primary_download_response = mock.Mock()
+    primary_download_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+        response=mock.Mock(status_code=404, json=lambda: {"message": "Not Found"}),
+    )
+
+    fallback_download_response = mock.Mock()
+    fallback_download_response.raise_for_status = mock.Mock()
+    fallback_download_response.iter_content.return_value = [b"fallback content"]
+
+    mock_requests_get.side_effect = [
+        metadata_response,
+        primary_download_response,
+        fallback_download_response,
+    ]
+
+    output_file = tmp_path / "downloaded_lfs.bin"
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    assert download("owner", "repo", "large_file.bin", "main", output_file)
+
+    assert mock_requests_get.call_count == 3
+
+    primary_download_call = mock_requests_get.call_args_list[1]
+    assert "Authorization" not in primary_download_call[1]["headers"]
+    assert primary_download_call[1]["headers"]["Accept"] == "application/octet-stream"
+
+    fallback_download_call = mock_requests_get.call_args_list[2]
+    assert (
+        fallback_download_call[0][0]
+        == "https://api.github.com/repos/owner/repo/contents/large_file.bin?ref=main"
+    )
+    assert fallback_download_call[1]["headers"]["Authorization"] == "token MOCK_TOKEN"
+    assert fallback_download_call[1]["headers"]["Accept"] == "application/vnd.github.raw"
+
+    assert output_file.read_bytes() == b"fallback content"
+
+
+def test_download_file_fallback_failure(
+    mock_get_token_from_cli: mock.MagicMock,
+    mock_requests_get: mock.MagicMock,
+    tmp_path: Path,
+):
+    """Return False when both primary and fallback downloads fail."""
+    mock_get_token_from_cli.return_value = "MOCK_TOKEN"
+
+    metadata_response = mock.Mock()
+    metadata_response.raise_for_status = mock.Mock()
+    metadata_response.json.return_value = {
+        "type": "file",
+        "name": "file.txt",
+        "download_url": "https://raw.githubusercontent.com/owner/repo/main/file.txt",
+    }
+
+    primary_download_response = mock.Mock()
+    primary_download_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+        response=mock.Mock(status_code=404, json=lambda: {"message": "Not Found"}),
+    )
+
+    fallback_download_response = mock.Mock()
+    fallback_download_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+        response=mock.Mock(status_code=404, json=lambda: {"message": "Not Found"}),
+    )
+
+    mock_requests_get.side_effect = [
+        metadata_response,
+        primary_download_response,
+        fallback_download_response,
+    ]
+
+    output_file = tmp_path / "downloaded.txt"
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    assert not download("owner", "repo", "file.txt", "main", output_file)
+    assert not output_file.exists()
+
+
 def test_download_file_http_error(
     mock_get_token_from_cli: mock.MagicMock,
     mock_requests_get: mock.MagicMock,
