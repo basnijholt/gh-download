@@ -259,7 +259,10 @@ def _prepare_download_headers(
 
 def _download_single_file(
     content_info: dict,
+    repo_owner: str,
+    repo_name: str,
     normalized_path: str,
+    branch: str,
     output_path: Path,
     headers: dict[str, str],
     *,
@@ -293,10 +296,32 @@ def _download_single_file(
 
     # Prepare headers based on whether this is an LFS file
     raw_download_headers = _prepare_download_headers(download_url, headers, quiet=quiet)
-
-    return _download_and_save_file(
+    primary_success = _download_and_save_file(
         download_url,
         raw_download_headers,
+        final_file_output_path,
+        file_name,
+        quiet=quiet,
+    )
+
+    if primary_success:
+        return True
+
+    if not quiet:
+        console.print(
+            "⚠️ Primary file URL failed; retrying through GitHub Contents API raw endpoint.",
+            style="yellow",
+        )
+
+    raw_content_api_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{normalized_path}?ref={branch}"
+    fallback_headers = {
+        "Authorization": headers["Authorization"],
+        "Accept": "application/vnd.github.raw",
+    }
+
+    return _download_and_save_file(
+        raw_content_api_url,
+        fallback_headers,
         final_file_output_path,
         file_name,
         quiet=quiet,
@@ -548,7 +573,10 @@ def download(
         # It's a single file
         return _download_single_file(
             content_info,
+            repo_owner,
+            repo_name,
             normalized_path,
+            branch,
             output_path,
             common_headers,
             quiet=quiet,
