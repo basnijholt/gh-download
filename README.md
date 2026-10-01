@@ -1,5 +1,7 @@
 # GitHub Downloader (gh-download)
 
+<img src="https://raw.githubusercontent.com/basnijholt/gh-download/main/.github/logo.svg" alt="gh-download logo" align="right" width="150" />
+
 `gh-download` is a Python command-line tool that allows you to download files from GitHub repositories, including private ones, using `GH_TOKEN`/`GITHUB_TOKEN` environment variables or your existing `gh` (GitHub CLI) authentication.
 
 > [!TIP]

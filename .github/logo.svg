@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">gh-download logo</title>
+  <desc id="desc">A download arrow that gently drops from a folder into a tray.</desc>
+  <defs>
+    <linearGradient id="background" x1="96" y1="64" x2="416" y2="448" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#161b22" />
+      <stop offset="1" stop-color="#0d1117" />
+    </linearGradient>
+    <linearGradient id="folder-back" x1="120" y1="104" x2="392" y2="256" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1f6feb" />
+      <stop offset="1" stop-color="#1158c7" />
+    </linearGradient>
+    <linearGradient id="folder-front" x1="120" y1="148" x2="392" y2="268" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#79c0ff" />
+      <stop offset="1" stop-color="#388bfd" />
+    </linearGradient>
+    <linearGradient id="arrow" x1="256" y1="176" x2="256" y2="350" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7ee787" />
+      <stop offset="1" stop-color="#2ea043" />
+    </linearGradient>
+    <style>
+      #static-arrow {
+        display: none;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #animated-arrow,
+        #tray-glow {
+          display: none;
+        }
+
+        #static-arrow {
+          display: inline;
+        }
+      }
+    </style>
+  </defs>
+
+  <rect x="32" y="32" width="448" height="448" rx="104" fill="url(#background)" />
+  <rect x="42" y="42" width="428" height="428" rx="96" fill="none" stroke="#30363d" stroke-width="4" />
+
+  <path d="M144 104H210C218 104 224 107 230 113L248 132H368C381 132 392 143 392 156V244C392 257 381 268 368 268H144C131 268 120 257 120 244V128C120 115 131 104 144 104Z" fill="url(#folder-back)" />
+  <rect x="120" y="150" width="272" height="118" rx="24" fill="url(#folder-front)" />
+  <rect x="130" y="160" width="252" height="98" rx="16" fill="none" stroke="#cae8ff" stroke-opacity="0.3" stroke-width="4" />
+
+  <rect id="tray-glow" x="164" y="318" width="184" height="72" rx="20" fill="#3fb950" opacity="0">
+    <animate
+      attributeName="opacity"
+      dur="3.6s"
+      values="0; 0; 0.22; 0; 0"
+      keyTimes="0; 0.42; 0.6; 0.86; 1"
+      repeatCount="indefinite"
+    />
+  </rect>
+  <path d="M150 318V372C150 390 164 404 182 404H330C348 404 362 390 362 372V318" fill="none" stroke="#8b949e" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" />
+
+  <g id="animated-arrow" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <animateTransform
+      attributeName="transform"
+      type="translate"
+      dur="3.6s"
+      values="0 -16; 0 -16; 0 12; 0 -16"
+      keyTimes="0; 0.3; 0.58; 1"
+      calcMode="spline"
+      keySplines="0 0 1 1; 0.45 0 0.55 1; 0.45 0 0.55 1"
+      repeatCount="indefinite"
+    />
+    <path d="M256 192V318M210 274L256 320L302 274" stroke="#0d1117" stroke-width="60" />
+    <path d="M256 192V318M210 274L256 320L302 274" stroke="url(#arrow)" stroke-width="32" />
+  </g>
+  <g id="static-arrow" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M256 186V312M210 268L256 314L302 268" stroke="#0d1117" stroke-width="60" />
+    <path d="M256 186V312M210 268L256 314L302 268" stroke="url(#arrow)" stroke-width="32" />
+  </g>
+</svg>
